@@ -1,0 +1,8 @@
+.env
+
+# Logs from local testing and development;
+tests/logs/*
+
+# `stack/` is the canonical, tracked stack. A local deployed copy carries
+# instance-specific policy/secrets and can drift from the corrected design;
+# keep any such copy out of version control (its own `.env` is ignored above).

@@ -1,0 +1,69 @@
+name: clawtilla
+
+networks:
+  clawegress-net:                # gateway egress -> internet
+    driver: bridge
+  clawcage-net:                  # client cage - no NAT, no host route
+    driver: bridge
+    internal: true
+
+volumes:
+  gateway-state:              # gateway state_dir (db, CA, WG keys, secrets)
+  clawbot-418-home:              # naming: clawbot-<name>-home
+
+services:
+  gateway:
+    build:
+      context: .
+      target: gateway
+    networks:
+      clawegress-net: {}
+      clawcage-net:
+        aliases: [gateway]    # clients dial http://gateway:8080 and WG gateway:51820
+    ports:
+      - "127.0.0.1:${CLAWTILLA_DASH_PORT:-5182}:8080" # dashboard on the loopback only
+    volumes:
+      - gateway-state:/opt/clawpatrol
+      # gateway.hcl is baked into the image (Dockerfile COPY) — NO host bind mount, so AC5
+      # ("gateway has no host bind mounts") holds on `docker inspect`. Edit policy by rebuilding:
+      # `docker compose build gateway && docker compose up -d gateway` — state persists on the
+      # gateway-state volume, no re-enrollment. (The gateway{} block isn't hot-reloadable anyway.)
+    environment:
+      CLAWPATROL_SECRET_ECHO_DUMMY: "test-secret-123" # ONLY FOR TESTING, NOT FOR PRODUCTION!!!
+    security_opt: [no-new-privileges:true]
+    read_only: true             # rootfs immutable; a compromised gateway can't
+                                # rewrite its own binary. State persists on the
+                                # gateway-state volume (a mount, stays writable);
+                                # /config is a ro mount. See docs/architecture.md hardening.
+    tmpfs:
+      - /tmp                    # only writable rootfs path the gateway needs
+    restart: unless-stopped
+
+  clawbot-418: &clawbot             # one service per agent
+    build:
+      context: .
+      target: client
+    init: true                   # tini as PID 1 - signals + zombie reaping for exec'd agents
+    hostname: clawbot-418        # stable device identity - clawpatrol keys peer + /32 on (owner, hostname)
+    networks: [clawcage-net]     # ONLY the cage
+    cap_add: [NET_ADMIN]
+    devices: ["/dev/net/tun"]
+    # No sysctls / no systempaths=unconfined: the entrypoint brings the tunnel up
+    # with `Table = off`, so wg-quick never writes net.ipv4.conf.all.src_valid_mark.
+    # /proc/sys stays read-only.
+    security_opt: [no-new-privileges:true]
+    volumes: [clawbot-418-home:/root]   # persists wg.conf + fetched CA (plain join skips the rc; the
+                                        # `run` wrapper supplies the agent env — see Dockerfile/F1)
+    environment:
+      GATEWAY_URL: "http://gateway:8080"
+      # wg-quick falls back to userspace WG if the LinuxKit kernel has no
+      # wireguard module. clawpatrol's wgQuickUp does not set this itself.
+      WG_QUICK_USERSPACE_IMPLEMENTATION: "wireguard-go"
+    depends_on: [gateway]
+    restart: unless-stopped   # only real restarts; the agent runs via `docker compose exec`
+
+  # add agents by copying the service: clawbot-<name> + hostname clawbot-<name> + a clawbot-<name>-home volume
+  # clawbot-foo:
+  #   <<: *clawbot
+  #   hostname: clawbot-foo
+  #   volumes: [clawbot-foo-home:/root]

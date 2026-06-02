@@ -1,0 +1,103 @@
+#!/usr/bin/env bash
+# Static checks on stack/gateway.hcl (text parse + optional `clawpatrol validate`).
+. "$(cd "$(dirname "$0")" && pwd)/../lib/common.sh"
+
+HCL="$STACK_DIR/gateway.hcl"
+[ -f "$HCL" ] || die "gateway.hcl not found at $HCL"
+SRC="$(cat "$HCL")"
+
+section "gateway.hcl — gateway block"
+
+expect R-NET-bind "dashboard_listen binds 0.0.0.0:8080 (clients need :8080 for join/CA)"
+assert_match "$SRC" 'dashboard_listen[[:space:]]*=[[:space:]]*"0\.0\.0\.0:8080"'
+
+expect R-WG-endpoint "wireguard.endpoint overrides to gateway:51820 (Docker DNS alias)"
+assert_match "$SRC" 'endpoint[[:space:]]*=[[:space:]]*"gateway:51820"'
+
+expect R-GW-state "state_dir is /opt/clawpatrol (matches the named volume mount)"
+assert_match "$SRC" 'state_dir[[:space:]]*=[[:space:]]*"/opt/clawpatrol"'
+
+section "gateway.hcl — profile / policy (no fail-open device)"
+
+expect R-POL-4 "a profile is declared (unprofiled devices fail-open to passthrough)"
+assert_match "$SRC" 'profile[[:space:]]+"[^"]+"[[:space:]]*\{'
+
+expect R-POL-4b "the default profile binds at least one credential (puts endpoints in scope)"
+# crude block check: profile "default" { credentials = [ ... ] }
+if printf '%s' "$SRC" | tr '\n' ' ' | grep -Eq 'profile[[:space:]]+"default"[[:space:]]*\{[^}]*credentials[[:space:]]*=[[:space:]]*\[[^]]+\]'; then pass; else fail "default profile has no credentials -> nothing in scope"; fi
+
+expect R-POL-1c "the MITM test endpoint ($ALLOWED_MITM_HOST) is configured"
+assert_contains "$SRC" "$ALLOWED_MITM_HOST"
+
+expect R-CRED-bind "a credential binds the MITM endpoint into scope (enables injection)"
+assert_match "$SRC" 'credential[[:space:]]+"[^"]+"[[:space:]]+"[^"]+"'
+
+expect R-POL-rules "allow + deny (catch-all) rules exist for the in-scope endpoint"
+if printf '%s' "$SRC" | grep -q 'verdict[[:space:]]*=[[:space:]]*"allow"' \
+   && printf '%s' "$SRC" | grep -q 'verdict[[:space:]]*=[[:space:]]*"deny"'; then pass; else fail "need both allow and deny rules"; fi
+
+# ---------------------------------------------------------------------------
+# KNOWN GAPS (review.md F4, F6) — policy advertises enforcement it does not
+# apply. Recorded as XFAIL (reported, do not fail the run) since the shipped
+# stack exhibits them. Flip to PASS once the stack is corrected.
+# ---------------------------------------------------------------------------
+section "gateway.hcl — policy reachability lints (review.md F4 / F6)"
+
+# F4: an `allow` rule only fires if its endpoint is actually in scope for a
+# profile (profile -> credential -> endpoint). An endpoint named by an allow
+# rule but bound by NO credential is a DEAD allow: enforcement that never runs;
+# the host falls through to unknown_host handling (relay for HTTPS today).
+# Shipped stack: `ghapi` (api.github.com) has an allow rule but no credential.
+allow_eps="$(printf '%s' "$SRC" | awk '
+  /rule[[:space:]]+"/ {inr=1; ep=""; v=""}
+  inr && /endpoint[[:space:]]*=[[:space:]]*https\./ { match($0,/https\.[A-Za-z0-9_-]+/); ep=substr($0,RSTART+6,RLENGTH-6) }
+  inr && /verdict[[:space:]]*=[[:space:]]*"allow"/ {v="allow"}
+  inr && /}/ { if(v=="allow" && ep!="") print ep; inr=0 }
+' | sort -u)"
+cred_eps="$(printf '%s' "$SRC" | awk '
+  /credential[[:space:]]+"/ {inc=1}
+  inc && /endpoint[[:space:]]*=[[:space:]]*https\./ { match($0,/https\.[A-Za-z0-9_-]+/); print substr($0,RSTART+6,RLENGTH-6) }
+  inc && /}/ {inc=0}
+' | sort -u)"
+dead=""
+for e in $allow_eps; do printf '%s\n' "$cred_eps" | grep -qx "$e" || dead="$dead $e"; done
+expect R-GAP-DEADRULE "every endpoint with an allow rule is bound by a credential (no dead allow rules)"
+if [ -n "${dead// /}" ]; then
+  xfail "dead allow rule(s): endpoint(s)$dead have an allow rule but no credential binds them into a profile (HTTPS host falls through to relay — review.md F4)"
+else
+  pass
+fi
+
+# F6: a credential bound to a HEADER-REFLECTING upstream echoes the gateway-
+# injected secret back into the response body, where the agent can read it —
+# defeating "secrets stay at the gateway". Benign in this stack (the secret
+# is a test dummy) but the channel is real and unguarded.
+reflect_hit=""
+for h in $REFLECTING_HOSTS; do
+  printf '%s' "$SRC" | grep -q "$h" && reflect_hit="$reflect_hit $h"
+done
+expect R-GAP-CRED-REFLECT "no endpoint host is a known header-reflecting upstream (would echo the injected secret to the agent)"
+if [ -n "${reflect_hit// /}" ]; then
+  xfail "policy references reflecting host(s):$reflect_hit — a credential bound here leaks the injected secret to the agent (benign with a dummy; a leak with a real secret — review.md F6)"
+else
+  pass
+fi
+
+section "gateway.hcl — defaults"
+
+expect R-POL-5 "unknown_host=deny is set (documented dead-config for HTTPS; cage is real containment)"
+assert_match "$SRC" 'unknown_host[[:space:]]*=[[:space:]]*"deny"'
+note "Per main.go:1424-1429 this is passthrough for HTTPS today — runtime test 30 confirms relay still happens."
+
+# Optional: validate with the real binary if available on PATH.
+if have clawpatrol; then
+  section "gateway.hcl — clawpatrol validate"
+  expect R-POL-valid "clawpatrol validate accepts gateway.hcl"
+  assert_ok "clawpatrol validate '$HCL'"
+else
+  section "gateway.hcl — clawpatrol validate"
+  expect R-POL-valid "clawpatrol validate accepts gateway.hcl"
+  skip "clawpatrol not on PATH (runtime test validates inside the container)"
+fi
+
+finish

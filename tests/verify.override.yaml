@@ -1,0 +1,38 @@
+# Verification-harness overlay — applied ONLY by this harness (run.sh/dc), NEVER
+# by a real deployment. It stamps every resource the harness creates with the
+# com.akefirad.clawtilla.harness=verify label so the harness can PROVE ownership before it
+# reuses or destroys anything (see lib/docker.sh: project_has_foreign / safe_down
+# / preflight_clean_slate).
+#
+# Why: the harness runs under a fixed project name (PROJECT, default
+# clawtilla-verify) for namespacing. If someone's real deployment happens to share
+# that name, name-based scoping alone can't tell "our leftover test stack" from
+# "their production stack". This label is the discriminator: a same-named project
+# whose resources LACK it is treated as foreign and is never adopted or wiped.
+#
+# The label is cosmetic to the running system (no posture impact), so applying it
+# during the static `docker compose config` parse is harmless.
+
+services:
+  gateway:
+    labels:
+      com.akefirad.clawtilla.harness: "verify"
+  clawbot-418:
+    labels:
+      com.akefirad.clawtilla.harness: "verify"
+
+volumes:
+  gateway-state:
+    labels:
+      com.akefirad.clawtilla.harness: "verify"
+  clawbot-418-home:
+    labels:
+      com.akefirad.clawtilla.harness: "verify"
+
+networks:
+  clawegress-net:
+    labels:
+      com.akefirad.clawtilla.harness: "verify"
+  clawcage-net:
+    labels:
+      com.akefirad.clawtilla.harness: "verify"
