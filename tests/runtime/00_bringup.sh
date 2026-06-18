@@ -78,11 +78,16 @@ sleep 3
 LOGS="$(dc logs --no-color "$TBOT_SVC" 2>/dev/null)"
 if printf '%s' "$LOGS" | grep -q 'enrolling (plain join'; then
   info "fresh enrollment in progress — waiting for user-code + CA fingerprint ..."
-  if ! wait_for 30 "dc logs --no-color '$TBOT_SVC' 2>/dev/null | grep -Eq 'CA fingerprint:'"; then
+  # clawpatrol v0.2.12 prints the CA fingerprint on its OWN line (under a "confirm
+  # this CA fingerprint matches the dashboard:" prompt), not as the older one-line
+  # "CA fingerprint: <hex>". Match the colon-separated SHA256 hex itself so this is
+  # robust across both output formats (the user-code/URL carry no colon-hex run).
+  FP_RE='([0-9A-Fa-f]{2}:){10,}[0-9A-Fa-f]{2}'
+  if ! wait_for 30 "dc logs --no-color '$TBOT_SVC' 2>/dev/null | grep -Eq '$FP_RE'"; then
     fail "join never printed a CA fingerprint (check '$TBOT_SVC' logs)"; finish; exit
   fi
   LOGS="$(dc logs --no-color "$TBOT_SVC" 2>/dev/null)"
-  CLI_FP="$(printf '%s' "$LOGS" | grep -Eo 'CA fingerprint:[[:space:]]*[0-9A-Fa-f:]+' | head -1 | sed 's/CA fingerprint:[[:space:]]*//')"
+  CLI_FP="$(printf '%s' "$LOGS" | grep -Eo "$FP_RE" | head -1)"
   # The join output prints the onboarding link (host 127.0.0.1, code in the URL):
   #   http://127.0.0.1:5182/#/onboard/<USER_CODE>
   VERIFY_URL="$(printf '%s' "$LOGS" | grep -Eo 'https?://[^[:space:]]+/#/onboard/[A-Za-z0-9-]+' | head -1)"

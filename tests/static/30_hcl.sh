@@ -14,8 +14,24 @@ assert_match "$SRC" 'dashboard_listen[[:space:]]*=[[:space:]]*"0\.0\.0\.0:8080"'
 expect R-WG-endpoint "wireguard.endpoint overrides to gateway:51820 (Docker DNS alias)"
 assert_match "$SRC" 'endpoint[[:space:]]*=[[:space:]]*"gateway:51820"'
 
+# clawpatrol HONORS wireguard.listen_port since v0.2.6 (cl-94cf); before it was
+# silently ignored and always bound 51820. Now that it's live, a listen_port that
+# disagrees with the advertised endpoint port breaks enrollment silently — so pin
+# it and assert it equals the endpoint port.
+expect R-WG-listenport "wireguard.listen_port is set and equals the endpoint port (no advertised/actual drift — v0.2.6)"
+lp="$(printf '%s' "$SRC" | grep -E '^[[:space:]]*listen_port[[:space:]]*=' | head -1 | sed -E 's/.*=[[:space:]]*([0-9]+).*/\1/')"
+epp="$(printf '%s' "$SRC" | grep -E 'endpoint[[:space:]]*=[[:space:]]*"gateway:' | head -1 | sed -E 's/.*gateway:([0-9]+).*/\1/')"
+if [ -n "$lp" ] && [ "$lp" = "$epp" ]; then pass; else fail "listen_port='$lp' endpoint-port='$epp' (must be set and equal)"; fi
+
 expect R-GW-state "state_dir is /opt/clawpatrol (matches the named volume mount)"
 assert_match "$SRC" 'state_dir[[:space:]]*=[[:space:]]*"/opt/clawpatrol"'
+
+# schema_version pins the config grammar (clawpatrol v0.2.5+). Omitting it loads
+# as legacy version 0 WITH a deprecation warning; pinning to the current grammar
+# makes a future, too-new clawpatrol fail loudly instead of silently mis-parsing.
+expect R-GW-schema "schema_version is pinned to the current grammar (1) — not left to legacy-v0 deprecation default"
+sv="$(printf '%s' "$SRC" | grep -E '^[[:space:]]*schema_version[[:space:]]*=' | head -1 | sed -E 's/.*=[[:space:]]*([0-9]+).*/\1/')"
+if [ "$sv" = "1" ]; then pass; else fail "schema_version='$sv' (expected 1; pin it so a version bump fails loudly, not silently)"; fi
 
 section "gateway.hcl — profile / policy (no fail-open device)"
 

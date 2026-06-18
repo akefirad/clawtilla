@@ -78,7 +78,14 @@ a profile reaches it via the transitive closure profile → credential → endpo
 a bare `endpoint` + `rule` bound to no profile is **dead config**, relayed not
 policed; and (3) an in-scope endpoint **fails open on no-rule-match** (clawpatrol
 denies only on an explicit `deny` verdict), so every `endpoint` with an `allow`
-rule needs a lowest-priority catch-all `deny`.
+rule needs a lowest-priority catch-all `deny`. *(Verified still true in v0.2.12:
+the HTTPS path takes `MatchRequest` → nil-on-no-match, and `main.go` denies only
+when `cr.Outcome.Verdict == "deny"`. The v0.2.5 "viral CEL unknowns" change
+(#633) added fail-**closed** behaviour only for requests clawpatrol could not
+honestly evaluate — bytes truncated at the inspection buffer or unparseable, which
+synthesize a deny — and the HTTPS path deliberately skips `MatchRequestFailClosed`.
+So a fully-inspected, in-scope, no-rule-match HTTPS request still fails open; the
+catch-all `deny` remains mandatory.)*
 
 ## Where the load-bearing pieces live
 
@@ -131,6 +138,14 @@ Condensed; full rationale and source citations in the archived
 - **Manual, fingerprint-verified enrollment.** No WG `--auto-approve` exists;
   approval is mandatory and must bind to a verified per-client identity — a
   rogue/auto-approved device gets a profile and real injected credentials.
+  *(v0.2.12: confirmed — clawpatrol's `autoApprove` is opt-in to the Tailscale
+  `--login` bootstrap path only (`setup.go`: "auto-approve unexpected status…"
+  only after a tsnet whois the gateway trusts); our plain WG `join` never takes
+  it, so approval stays a manual operator action. v0.2.7/v0.2.8 also added
+  profile assignment at approval time — the `--profile` join flag and the
+  approver's pick — which reinforces "every ClawBot must get a profile". The
+  join CLI now prints the CA fingerprint on its own line under a "confirm this
+  matches the dashboard" prompt; the harness parses it as colon-hex.)*
 - **Agent runs as root + `NET_ADMIN` (v1).** PID 1 needs the caps for tunnel
   bring-up; the agent does not but is kept root for v1. A cost trade-off, not a
   safety claim — residual escape risk is bounded by the cage + the VM boundary +
@@ -182,7 +197,8 @@ also flagged the following; this is the repo's disposition:
 - **F2 (open)** — DNS escapes containment: tunneled DNS content is not run through
   the rule engine, and a malicious agent can query Docker's `127.0.0.11` embedded
   resolver directly, bypassing the gateway entirely. A low-bandwidth exfil / C2
-  channel. (The `127.0.0.11`-bypass half is reasoned, not yet probed live.)
+  channel. (The `127.0.0.11`-bypass half is now confirmed live: the v0.2.12
+  runtime suite's R-GAP-DNS resolved `example.com` off-tunnel via `127.0.0.11`.)
 - **F3 (mitigated — runbook)** — first-run dashboard-password claim; see N3.
 - **F4 (fixed)** — the stack advertised a read-only GitHub allowlist (`ghapi`)
   that was never bound into a profile, so `api.github.com` was relayed, not policed
@@ -191,7 +207,7 @@ also flagged the following; this is the repo's disposition:
 
 ## Status
 
-v0, built against clawpatrol `v0.2.4` (the `CLAWPATROL_VERSION` pin in
+v0, built against clawpatrol `v0.2.12` (the `CLAWPATROL_VERSION` pin in
 `stack/Dockerfile`). The deployed binary and the `oss/clawpatrol` submodule are
 meant to stay in lockstep — bumping the version means moving the submodule to the
 matching tag and updating the SHA256s. To confirm lockstep, run `git describe
@@ -200,3 +216,15 @@ annotated tags and can print a misleading older tag + commit offset even when HE
 sits exactly on a release). The network security posture is reviewed by
 the [`clawtilla-security-review`](../.claude/skills/clawtilla-security-review/)
 skill; the runnable test suites live in [`tests/`](../tests/).
+
+The `v0.2.4 → v0.2.12` bump was validated end-to-end on Docker Desktop (static +
+build + runtime: 0 failures; only the documented F2/F6 XFAILs and the
+config-variant SKIPs). The only stack-relevant change in the eight intervening
+releases that the boundary depends on was cosmetic — the `join` CLI moved the CA
+fingerprint to its own line (harness parser updated). `gateway.hcl` gained
+`schema_version = 1` (clawpatrol now versions the grammar; omitting it loads as
+legacy v0 with a deprecation warning) and an explicit `wireguard.listen_port =
+51820` (v0.2.6 began honouring it instead of always binding 51820 — pinned equal
+to the advertised endpoint port so the two can't drift). Upstream also now
+documents egress interception as "best-effort" (v0.2.11), which matches this
+repo's long-standing N1/F1 framing — the cage, not the gateway, is the boundary.
