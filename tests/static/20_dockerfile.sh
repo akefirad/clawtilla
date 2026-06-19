@@ -41,6 +41,15 @@ expect R-ENV-wrapper "client bakes a /usr/local/bin/run wrapper that evals clawp
 if printf '%s' "$client_stage" | grep -q '/usr/local/bin/run' \
    && printf '%s' "$client_stage" | grep -q 'clawpatrol env'; then pass; else fail "run wrapper / eval missing"; fi
 
+# The run wrapper must widen CA trust from clawpatrol's gateway-only bundle to the
+# system store (gateway CA + public roots) so tools reach RELAYED hosts (real
+# certs) — gated by CLAWTILLA_TRUST_PUBLIC_CAS, settable at build (ARG) and runtime.
+expect R-ENV-catrust "run wrapper widens CA trust to the system store, toggled by CLAWTILLA_TRUST_PUBLIC_CAS (build-arg + runtime)"
+if printf '%s' "$client_stage" | grep -q 'ca-certificates.crt' \
+   && printf '%s' "$client_stage" | grep -q 'SSL_CERT_FILE=' \
+   && printf '%s' "$client_stage" | grep -Eq 'ARG[[:space:]]+CLAWTILLA_TRUST_PUBLIC_CAS' \
+   && printf '%s' "$client_stage" | grep -q 'CLAWTILLA_TRUST_PUBLIC_CAS:-1'; then pass; else fail "wrapper does not widen CA / missing build-arg + runtime toggle"; fi
+
 expect R-WG-tools "client installs wireguard-tools + userspace fallback + diag tools"
 missing_pkg=
 for pkg in wireguard-tools wireguard-go iproute2 dnsutils procps; do
