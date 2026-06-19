@@ -78,7 +78,7 @@ a profile reaches it via the transitive closure profile → credential → endpo
 a bare `endpoint` + `rule` bound to no profile is **dead config**, relayed not
 policed; and (3) an in-scope endpoint **fails open on no-rule-match** (clawpatrol
 denies only on an explicit `deny` verdict), so every `endpoint` with an `allow`
-rule needs a lowest-priority catch-all `deny`. *(Verified still true in v0.2.12:
+rule needs a lowest-priority catch-all `deny`. *(Verified still true in v0.3.2:
 the HTTPS path takes `MatchRequest` → nil-on-no-match, and `main.go` denies only
 when `cr.Outcome.Verdict == "deny"`. The v0.2.5 "viral CEL unknowns" change
 (#633) added fail-**closed** behaviour only for requests clawpatrol could not
@@ -138,7 +138,7 @@ Condensed; full rationale and source citations in the archived
 - **Manual, fingerprint-verified enrollment.** No WG `--auto-approve` exists;
   approval is mandatory and must bind to a verified per-client identity — a
   rogue/auto-approved device gets a profile and real injected credentials.
-  *(v0.2.12: confirmed — clawpatrol's `autoApprove` is opt-in to the Tailscale
+  *(v0.3.2: confirmed — clawpatrol's `autoApprove` is opt-in to the Tailscale
   `--login` bootstrap path only (`setup.go`: "auto-approve unexpected status…"
   only after a tsnet whois the gateway trusts); our plain WG `join` never takes
   it, so approval stays a manual operator action. v0.2.7/v0.2.8 also added
@@ -197,7 +197,7 @@ also flagged the following; this is the repo's disposition:
 - **F2 (open)** — DNS escapes containment: tunneled DNS content is not run through
   the rule engine, and a malicious agent can query Docker's `127.0.0.11` embedded
   resolver directly, bypassing the gateway entirely. A low-bandwidth exfil / C2
-  channel. (The `127.0.0.11`-bypass half is now confirmed live: the v0.2.12
+  channel. (The `127.0.0.11`-bypass half is now confirmed live: the v0.3.2
   runtime suite's R-GAP-DNS resolved `example.com` off-tunnel via `127.0.0.11`.)
 - **F3 (mitigated — runbook)** — first-run dashboard-password claim; see N3.
 - **F4 (fixed)** — the stack advertised a read-only GitHub allowlist (`ghapi`)
@@ -207,7 +207,7 @@ also flagged the following; this is the repo's disposition:
 
 ## Status
 
-v0, built against clawpatrol `v0.2.12` (the `CLAWPATROL_VERSION` pin in
+v0, built against clawpatrol `v0.3.2` (the `CLAWPATROL_VERSION` pin in
 `stack/Dockerfile`). The deployed binary and the `oss/clawpatrol` submodule are
 meant to stay in lockstep — bumping the version means moving the submodule to the
 matching tag and updating the SHA256s. To confirm lockstep, run `git describe
@@ -228,3 +228,20 @@ legacy v0 with a deprecation warning) and an explicit `wireguard.listen_port =
 to the advertised endpoint port so the two can't drift). Upstream also now
 documents egress interception as "best-effort" (v0.2.11), which matches this
 repo's long-standing N1/F1 framing — the cage, not the gateway, is the boundary.
+
+The subsequent `v0.2.12 → v0.3.2` bump (three releases, crossing the `0.3` minor)
+was likewise validated end-to-end on Docker Desktop (static + build + runtime:
+0 failures; only the same documented F2/F6 XFAILs and config-variant SKIPs). The
+`0.3` line is dominated by a new external-plugin subsystem (`extplugin`) that is
+**inert with no `plugin` blocks** — no new listener, socket, subprocess, or
+default egress — plus relay/seccomp/nsswitch fixes scoped to `clawpatrol run`,
+which this stack never invokes (it uses `join` + `clawpatrol env`). No
+`gateway.hcl` change was required: the `schema_version` window is unchanged
+(`0..1`; pin stays `1`) and every config construct this stack uses is
+byte-identical. The N1 splice (`ep == nil → splice`), unprofiled fail-open
+(`profileFor → defaultProfileName`), and `bearer_token` add/overwrite injection
+were re-verified against the v0.3.2 source and all hold. The one genuinely new
+applicable feature — opt-in OTel GenAI telemetry (`genai_telemetry {}`) — was
+deliberately not adopted: it adds a new egress destination and, with
+`include_message_content`, routes raw prompts/completions off-box (both off by
+default), and buys nothing for this minimal stack with no collector.

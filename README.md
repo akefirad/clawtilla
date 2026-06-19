@@ -147,7 +147,7 @@ To run the full evaluation, see [`tests/README.md`](./tests/README.md).
 
 ## 📊 Status
 
-v0 — Built against clawpatrol `v0.2.12`.
+v0 — Built against clawpatrol `v0.3.2`.
 
 ## ⚖️ License
 
