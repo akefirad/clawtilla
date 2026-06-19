@@ -103,7 +103,7 @@ section "gateway.hcl — defaults"
 
 expect R-POL-5 "unknown_host=deny is set (documented dead-config for HTTPS; cage is real containment)"
 assert_match "$SRC" 'unknown_host[[:space:]]*=[[:space:]]*"deny"'
-note "Per main.go:1424-1429 this is passthrough for HTTPS today — runtime test 30 confirms relay still happens."
+note "Per the ep==nil -> g.splice branch in main.go handle() this is passthrough for HTTPS today — runtime test 30 confirms relay still happens. (Anchor on the name; the line drifts — ~1424 in v0.2.12, ~1495 in v0.3.2.)"
 
 # Optional: validate with the real binary if available on PATH.
 if have clawpatrol; then
