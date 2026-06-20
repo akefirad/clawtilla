@@ -47,6 +47,36 @@ else
   skip "could not confirm via system store (run-wrapper path already covered above)"
 fi
 
+section "CA trust for relayed hosts (run wrapper widens gateway-only -> +public roots)"
+
+# By default the wrapper repoints the replace-style CA bundles at the system store
+# (gateway CA + public roots) so strict-trust tools (uv/rustls, pip, requests, aws)
+# reach RELAYED hosts. Asserted on the env the wrapper actually produces — this is
+# deterministic, unlike a curl probe (curl falls back to the system CA PATH even
+# when its bundle is gateway-only, so it can neither prove nor disprove the widen;
+# the real-world fix was proven manually with `uv python install`).
+SYS_CA=/etc/ssl/certs/ca-certificates.crt
+
+expect R-ENV-catrust "run wrapper widens SSL_CERT_FILE to the system store by default"
+def_ssl="$(xrun "$TBOT_SVC" sh -c 'printf %s "$SSL_CERT_FILE"' 2>/dev/null | tr -d '\r')"
+if [ "$def_ssl" = "$SYS_CA" ]; then
+  pass "SSL_CERT_FILE=$def_ssl (gateway CA + public roots)"
+else
+  fail "not widened: SSL_CERT_FILE='$def_ssl' (strict-trust tools would fail UnknownIssuer on relayed hosts)"
+fi
+
+# Toggle off (build-arg or runtime): the wrapper must NOT widen — the bundle stays
+# at clawpatrol's gateway-only cert (or unset), i.e. anything but the system store.
+# (Strict trust binds only tools that honor these vars strictly; curl still falls
+# back to the system store — see docs/architecture.md "CA trust for relayed hosts".)
+expect R-ENV-catrust-strict "CLAWTILLA_TRUST_PUBLIC_CAS=0 does NOT widen (strict gateway-only bundle)"
+strict_ssl="$(dc exec -T -e CLAWTILLA_TRUST_PUBLIC_CAS=0 "$TBOT_SVC" run sh -c 'printf %s "$SSL_CERT_FILE"' 2>/dev/null | tr -d '\r')"
+if [ "$strict_ssl" != "$SYS_CA" ]; then
+  pass "strict: SSL_CERT_FILE='${strict_ssl:-<unset>}' (not the system store)"
+else
+  fail "SSL_CERT_FILE widened to the system store despite CLAWTILLA_TRUST_PUBLIC_CAS=0 (toggle ineffective)"
+fi
+
 # Placeholder-token var: only present if a credential plugin defines one for the
 # configured credential. The POC's generic bearer_token may push none; report
 # what env-pushdown returned rather than assert a specific name.

@@ -99,6 +99,8 @@ rationale + source citations in the archived [design records](./docs/archive).
   [discovery](./docs/archive/discovery.md), [plan](./docs/archive/plan.md)
 - **Agent environment supplied by a `run` wrapper, not a shell rc** — plain join
   wires no rc. → [plan](./docs/archive/plan.md)
+- **Agents trust the gateway CA *and* the public roots** — else relayed hosts (real
+  certs) break tools like `uv`/`pip`. → [architecture](./docs/architecture.md)
 - **Gateway CA installed by the entrypoint**, not clawpatrol's built-in trust step
   — the latter needs `sudo`, which `no-new-privileges` refuses. →
   [discovery](./docs/archive/discovery.md)

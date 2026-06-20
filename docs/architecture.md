@@ -132,7 +132,9 @@ Condensed; full rationale and source citations in the archived
   entrypoint installs the CA into the system store itself.
 - **Agent env via a `run` wrapper** (`eval "$(clawpatrol env)"`). Plain `join`
   wires no shell rc (that is `--whole-machine` only), so the wrapper supplies the
-  CA-bundle + placeholder-token vars before exec'ing the agent.
+  CA-bundle + placeholder-token vars before exec'ing the agent. It then widens the
+  CA bundle from gateway-only to the system store (gateway CA + public roots) so
+  tools also work against relayed hosts (see **CA trust for relayed hosts** below).
 - **Monitor + per-endpoint policy, not default-deny egress** (see containment
   model above). Accepted; the cage is the boundary.
 - **Manual, fingerprint-verified enrollment.** No WG `--auto-approve` exists;
@@ -152,6 +154,59 @@ Condensed; full rationale and source citations in the archived
   `no-new-privileges`.
 - **Gateway hardened** — read-only rootfs, no caps, loopback-only dashboard,
   named volumes (no host binds).
+
+## CA trust for relayed hosts
+
+The `run` wrapper makes the agent trust the gateway CA **and** the public root CAs.
+This is deliberate — and it took a wrong default to get here.
+
+**The issue.** `clawpatrol env` (which the wrapper `eval`s) points the CA-bundle
+variables — `SSL_CERT_FILE`, `REQUESTS_CA_BUNDLE`, `CURL_CA_BUNDLE`, `PIP_CERT`,
+`DENO_CERT`, `AWS_CA_BUNDLE`, `GIT_SSL_CAINFO` — at a file holding **only the
+gateway CA**, on the assumption that every upstream is MITM'd. But the gateway
+MITMs only the *allowlisted* hosts and **relays** (splices) everything else (N1),
+and a relayed host presents its **real** certificate. A tool that treats those
+variables as a *replacement* trust store therefore rejects every relayed host:
+`uv python install`, for instance, fetches CPython from `github.com` (allowlisted,
+MITM'd → gateway cert, fine) but follows a redirect to
+`release-assets.githubusercontent.com` (not allowlisted → relayed → real Let's
+Encrypt cert) and dies with `invalid peer certificate: UnknownIssuer`. It is not
+tool-specific — pip, `requests`, deno, aws-cli, git all hit it. (Node's
+`NODE_EXTRA_CA_CERTS` is *additive* to its built-in roots, so Node is immune; curl
+falls back to its CA *path*, so it limps along — which is why the bug hides from a
+quick `curl` test.)
+
+**Options.**
+
+- **A — trust the gateway CA + the public roots.** Point the replace-style bundle
+  variables at the system trust store (`/etc/ssl/certs/ca-certificates.crt`), which
+  `client.sh` already seeds with the gateway CA *and* the public roots (it runs
+  `update-ca-certificates`). One change in the `run` wrapper fixes every current
+  and future tool.
+- **B — keep gateway-only trust, allowlist each host.** Add every host each tool
+  needs to `gateway.hcl` so it is MITM'd. Whack-a-mole (python-build-standalone,
+  pypi + pythonhosted, npm, crates, apt, …); "curate forever", and it MITMs large
+  public binary downloads for no gain.
+- **C — true allowlist-only egress.** If the goal is to *block* unlisted hosts, do
+  it at the network layer — an egress firewall in front of the gateway, or a relay
+  deny-list (see F1/N1) — not via CA rejection, which is leaky (curl / `-k` bypass
+  it) and breaks tools confusingly. A separate posture change.
+
+**Decision: A.** It matches this stack's posture — egress is monitor + per-endpoint
+policy, the cage is the boundary, and relayed hosts are *reachable* by design (N1).
+Gateway-only trust never enforced an egress boundary (it is trivially bypassed), so
+widening it to the public roots removes confusing breakage without weakening
+anything real: the cage still gates egress, allowlisted hosts still validate against
+the gateway CA (which is in the system store), and **credential injection is
+untouched** — real secrets are injected gateway-side and never reach the agent. If
+you want unlisted hosts actually *blocked*, that is Option C, not this. Implemented
+in [`stack/Dockerfile`](../stack/Dockerfile)'s `run` wrapper, on by default. Set
+`CLAWTILLA_TRUST_PUBLIC_CAS=0` to keep strict gateway-only trust for a locked-down
+ClawBot — at build (`--build-arg`, baked as the image default via `ARG`/`ENV`) or
+at runtime (compose `environment:` / `exec -e`, which overrides the baked default).
+Strict mode binds only tools that honor `SSL_CERT_FILE`/`*_CA_BUNDLE` strictly
+(uv/rustls, pip, requests, aws); curl falls back to the system store regardless, so
+it is best-effort friction, not a hard egress block (that is Option C).
 
 ## Accepted risks & non-goals
 

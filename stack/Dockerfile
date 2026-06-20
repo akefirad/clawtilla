@@ -70,12 +70,28 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY client.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh
 
+# CA trust for relayed hosts (used by the run wrapper below): 1 = widen to gateway
+# CA + public roots (default), 0 = strict gateway-only. Build default here;
+# compose `environment:` / `exec -e` override it at runtime.
+ARG CLAWTILLA_TRUST_PUBLIC_CAS=1
+ENV CLAWTILLA_TRUST_PUBLIC_CAS=${CLAWTILLA_TRUST_PUBLIC_CAS}
+
 # Agent launch wrapper. Plain `clawpatrol join` (not --whole-machine) never
 # installs the shell rc, so an exec'd agent gets NO placeholder-token vars and
 # NO Node/Python CA-bundle vars (NODE_EXTRA_CA_CERTS, REQUESTS_CA_BUNDLE, …).
 # `eval "$(clawpatrol env)"` pulls both (CA vars from local config, tokens from
 # the gateway). Launch the agent with: `docker compose exec -it clawbot-418 run <agent>`.
-RUN printf '#!/bin/sh\nset -eu\neval "$(clawpatrol env)"\nexec "$@"\n' \
+RUN printf '%s\n' \
+      '#!/bin/sh' \
+      'set -eu' \
+      'eval "$(clawpatrol env)"' \
+      '# clawpatrol env trusts only the gateway CA; widen to the system store (gateway' \
+      '# CA + public roots) so tools reach relayed hosts, unless CLAWTILLA_TRUST_PUBLIC_CAS=0.' \
+      'if [ "${CLAWTILLA_TRUST_PUBLIC_CAS:-1}" != "0" ]; then' \
+      '  C=/etc/ssl/certs/ca-certificates.crt' \
+      '  export SSL_CERT_FILE="$C" REQUESTS_CA_BUNDLE="$C" CURL_CA_BUNDLE="$C" GIT_SSL_CAINFO="$C" DENO_CERT="$C" PIP_CERT="$C" AWS_CA_BUNDLE="$C"' \
+      'fi' \
+      'exec "$@"' \
       > /usr/local/bin/run && chmod +x /usr/local/bin/run
 
 # NO `USER` line - starts as root so the entrypoint can
