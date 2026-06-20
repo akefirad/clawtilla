@@ -78,7 +78,7 @@ sleep 3
 LOGS="$(dc logs --no-color "$TBOT_SVC" 2>/dev/null)"
 if printf '%s' "$LOGS" | grep -q 'enrolling (plain join'; then
   info "fresh enrollment in progress — waiting for user-code + CA fingerprint ..."
-  # clawpatrol (v0.2.12+, reconfirmed v0.3.2: setup.go prints "…confirm this CA
+  # clawpatrol (v0.2.12+, reconfirmed v0.5.1: setup.go prints "…confirm this CA
   # fingerprint matches the dashboard:" then the fingerprint on its own line) emits
   # the CA fingerprint on its OWN line, not as the older one-line "CA fingerprint:
   # <hex>". Match the colon-separated SHA256 hex itself so this is robust across
