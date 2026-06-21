@@ -30,7 +30,7 @@ consolidates two independent review passes against the same tree.
 | **F4** | Shipped policy advertises stronger enforcement than it applies (dead rule, misleading comment, no in-scope default-deny) | **Medium** |
 | **F5** | Public onboarding endpoint is an unauthenticated gateway DoS vector | **Low / Medium** |
 | **F6** | Credential injection is observable through header-reflecting upstreams | **Low / Medium** |
-| **F7** | Supply-chain pinning is partial (base image + apt unpinned) | **Low / Info** |
+| **F7** | Supply-chain pinning is partial (apt packages unpinned) | **Low / Info** |
 | **F8** | Secret-via-env pattern demonstrated in the committed Compose file | **Low / Info** |
 
 Plus test/assurance observations (T1–T3) and a list of what is genuinely solid.
@@ -244,12 +244,13 @@ for the stack.
 
 The clawpatrol binary is well pinned (version + per-arch SHA256, verified at
 build, `stack/Dockerfile:18-28`) and the submodule tag is checked for
-lockstep. The base image (`ubuntu:jammy-20260509`, a mutable-ish tag) and apt
-packages (`apt-get install` pulls floating versions, `Dockerfile:10-12,60-63`)
-are not pinned by digest, and the tests verify only the binary pin. A compromised
-mirror could inject into either image. Inherent to most Docker builds and bounded
-on the gateway by the read-only rootfs, but worth noting given the "assume
-hostile" posture.
+lockstep. The base image is now pinned by index digest
+(`ubuntu:noble-20260509.1@sha256:786a8b…`, `Dockerfile:8`), so it is immutable
+across rebuilds. The remaining gap is apt packages (`apt-get install` pulls
+floating versions, `Dockerfile:10-12,60-63`), which are not pinned and which the
+tests do not verify. A compromised mirror could inject at apt time. Inherent to
+most Docker builds and bounded on the gateway by the read-only rootfs, but worth
+noting given the "assume hostile" posture.
 
 ### F8 — Secret-via-env pattern in the committed Compose file — Low / Info
 

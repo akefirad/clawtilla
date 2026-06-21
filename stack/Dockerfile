@@ -5,7 +5,7 @@
 # bumping CLAWPATROL_VERSION means moving the submodule to the matching
 # tag AND updating the two SHA256s below (from that release's SHA256SUMS).
 
-FROM ubuntu:jammy-20260509 AS base
+FROM ubuntu:noble-20260509.1@sha256:786a8b558f7be160c6c8c4a54f9a57274f3b4fb1491cf65146521ae77ff1dc54 AS base
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates curl \
@@ -60,12 +60,16 @@ FROM base AS client
 RUN apt-get update && apt-get install -y --no-install-recommends \
       iproute2 iptables procps iputils-ping dnsutils \
       wireguard-tools wireguard-go \
-    && rm -rf /var/lib/apt/lists/*
+      git unzip curl wget xz-utils
 
 # Persistence home is /root (mounted from the named volume in compose).
-# join writes ~/.config/clawpatrol/wg.conf + ~/.clawpatrol/ca.crt there. Plain
-# join does NOT wire `clawpatrol env` into the shell rc (whole-machine only) — the
-# `run` wrapper supplies that env; client.sh installs the CA into the system store.
+# Set HOME explicitly so home-targeted provisioning lands in /root regardless of
+# base/USER changes. (Docker defaults HOME=/root for root, but don't rely on it.)
+ENV HOME=/root
+
+# There `clawpatrol join` writes ~/.config/clawpatrol/wg.conf + ~/.clawpatrol/ca.crt.
+# Plain join does NOT wire `clawpatrol env` into the shell rc (whole-machine only) —
+# the `run` wrapper supplies that env; client.sh installs the CA into the system store.
 
 COPY client.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh
