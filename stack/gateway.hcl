@@ -80,6 +80,7 @@ defaults {
 endpoint "https" "echo" {
   hosts = ["postman-echo.com"]
 }
+
 # DELIBERATELY a bearer_token (not the cleaner v0.2.5+ `passthrough` type): this
 # credential does double duty — it binds `echo` into the profile (→ in scope →
 # MITM'd) AND injects `Bearer $CLAWPATROL_SECRET_ECHO_DUMMY`, which the
@@ -91,12 +92,14 @@ endpoint "https" "echo" {
 credential "bearer_token" "echo-dummy" {
   endpoint = https.echo
 }
+
 # allow GET/HEAD …
 rule "echo-get" {
   endpoint  = https.echo
   condition = "http.method in ['GET', 'HEAD']"
   verdict   = "allow"
 }
+
 # … deny everything else (catch-all; clawpatrol does NOT default-deny in-scope-no-match).
 rule "echo-default" {
   endpoint = https.echo
@@ -105,6 +108,70 @@ rule "echo-default" {
   reason   = "verb not allowed"
 }
 
+# ── EXAMPLE: ChatGPT-subscription (Codex) credential for a Hermes agent ───────
+# Lets a Hermes agent run inference on your ChatGPT Plus/Pro subscription WITHOUT
+# the agent ever holding the real OAuth token. Hermes POSTs to
+# chatgpt.com/backend-api/codex/responses with `Authorization: Bearer <token>`
+# and a `chatgpt-account-id` header.
+#
+# This has three parts; the last two live in this file:
+#   1. CLIENT (your agent's provisioning, NOT this file): something on the client
+#      seeds a fake Codex JWT into ~/.hermes/auth.json — with a far-future
+#      `exp` and the `["https://api.openai.com/auth"].chatgpt_account_id` claim
+#      Hermes requires. Hermes never verifies the signature, so it accepts the
+#      token and skips its device-login; the far-future `exp` means it SHOULD
+#      never refresh against auth.openai.com. Don't bank on that alone — part (3)
+#      blocks the refresh path at the gateway so the fake refresh token can't leak
+#      even if a build ignores `exp` or the clock is wrong.
+#   2. GATEWAY (here): bring chatgpt.com into scope so it's MITM'd, and bind the
+#      `openai_codex_oauth` credential. Its injector OVERWRITES the fake Bearer
+#      with the REAL subscription token and re-stamps `chatgpt-account-id` from
+#      that token's own claims — so the fake token never authenticates upstream,
+#      the fake account-id is irrelevant, and the real token never reaches the
+#      agent process.
+#   3. GATEWAY (here), DEFENSE IN DEPTH — the point the far-future-`exp` story
+#      alone misses: bring auth.openai.com into scope and DENY it, so a seeded
+#      agent's refresh/device-login attempt is blocked AT the gateway and the fake
+#      refresh token never reaches OpenAI. A deny rule only fires on an IN-SCOPE
+#      endpoint, and scope is profile -> credential -> endpoint (see the in-scope
+#      notes above) — so auth.openai.com needs a `passthrough` credential (binds it
+#      into scope, injects nothing) AND a profile entry. An endpoint + deny rule
+#      that NO credential binds is DEAD CONFIG: the host is relayed, not denied,
+#      and the block silently does nothing. The deny does NOT touch the gateway's
+#      OWN server-side refresh: that dials auth.openai.com directly
+#      (http.DefaultClient in cmd/clawpatrol/oauth.go), not through the tunnel/rule
+#      engine, so the rule never sees it — which is why connecting the real token
+#      out-of-band still works.
+#
+# Give the gateway the real token out-of-band: connect the subscription through
+# the dashboard's OAuth (device) flow, or supply the refresh token via the secret
+# store (CODEX_REFRESH). The gateway refreshes it itself over direct egress (not
+# through the tunnel/rule engine), so the auth.openai.com endpoint in (3) is NOT
+# what makes refresh work — it exists only to DENY the agent's own refresh path.
+#
+# Use a plain `https` endpoint here. The `openai_codex_https` endpoint type adds a
+# synthetic-JWT env push-down plus a JWKS / agent-task responder that ONLY the
+# official `codex` CLI's AgentIdentity mode needs — Hermes routes to chatgpt.com
+# on its own and uses none of it.
+#
+# Uncomment ALL the lines below AND add `openai_codex_oauth.codex` and
+# `passthrough.openai-auth` to the profile below.
+# (An endpoint no profile credential binds is passthrough-relayed, never injected
+# — see the in-scope note above; a bare endpoint here would silently do nothing.)
+#
+#   endpoint "https" "openai-chatgpt" { hosts = ["chatgpt.com"] }
+#   credential "openai_codex_oauth" "codex" { endpoint = https.openai-chatgpt }
+#   # Part (3), defense in depth. The passthrough credential binds auth.openai.com
+#   # into scope so the deny rule actually fires; without it the host is relayed,
+#   # not denied (dead config). Harmless to the gateway's own refresh (direct dial).
+#   endpoint "https" "openai-auth" { hosts = ["auth.openai.com"] }
+#   credential "passthrough" "openai-auth" { endpoint = https.openai-auth }
+#   rule "deny-openai-auth" { endpoint = https.openai-auth  verdict = "deny"  reason = "agents must not refresh Codex tokens; the gateway holds the real one" }
+
 profile "default" {
-  credentials = [bearer_token.echo-dummy]
+  credentials = [
+    bearer_token.echo-dummy,
+    # openai_codex_oauth.codex,   # uncomment together with the Codex/Hermes example above
+    # passthrough.openai-auth,    # ditto — puts auth.openai.com in scope so deny-openai-auth can fire
+  ]
 }

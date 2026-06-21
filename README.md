@@ -3,15 +3,15 @@
 **Run untrusted AI agents like you mean it!**
 
 Clawtilla is a Docker Compose stack setting up a self-hosted network firewall for AI agents. You run a fleet of
-agent containers — *ClawBots* — sealed inside a network cage whose only *direct*
+agent containers — _ClawBots_ — sealed inside a network cage whose only _direct_
 route out is a single gateway you control: no direct internet, no direct route to
 your host. The gateway is the intended egress chokepoint — connections to
-*configured* endpoints are weighed against per-endpoint allow/deny rules and
+_configured_ endpoints are weighed against per-endpoint allow/deny rules and
 logged, and when a real API key is needed the request is handed off with
 credentials the agent never holds and can never walk away with.
 
 Assume every agent is already compromised, jailbroken, or just having a very bad
-day. The cage stops its *direct* escape cold and the gateway records and bounds
+day. The cage stops its _direct_ escape cold and the gateway records and bounds
 the rest. The blast radius is contained, but not zero, and the cage is not airtight. See **What's not included** below.
 
 The substance is all <img src="https://demo.clawpatrol.dev/claw-patrol-icon.svg" alt="clawpatrol" width="20" style="vertical-align: middle"> [clawpatrol](https://github.com/denoland/clawpatrol) (gateway,
@@ -48,7 +48,7 @@ them a hard network boundary and a single auditable egress point:
 
 - **Not multi-host / distributed.** One Docker host (designed and tested on Docker
   Desktop for macOS).
-- **Not a code-execution sandbox.** It secures the *network*; process and kernel
+- **Not a code-execution sandbox.** It secures the _network_; process and kernel
   isolation remain the container runtime's job.
 - **Not hardened against a hostile co-tenant** on the agent network (single-tenant
   assumption).
@@ -76,9 +76,9 @@ Each is a deliberate, documented decision — see **Key decisions** and the desi
   bounded by the cage, the VM boundary, and `no-new-privileges`.
 - **Gateway → host isolation is best-effort** on Docker Desktop.
 - **"No reach into your host" is direct-only.** The cage blocks the agent's
-  *direct* route off-net, but the gateway's WireGuard relay forwards agent traffic
+  _direct_ route off-net, but the gateway's WireGuard relay forwards agent traffic
   to anything the gateway itself can reach — the host-gateway, RFC1918 neighbours,
-  or cloud metadata. No *direct* route, not no *indirect* reach.
+  or cloud metadata. No _direct_ route, not no _indirect_ reach.
 - **DNS is not contained.** Tunneled DNS content isn't run through the rule engine,
   and a malicious agent can query Docker's embedded resolver (`127.0.0.11`)
   directly, bypassing the gateway — usable for low-bandwidth exfil / beaconing.
@@ -95,11 +95,11 @@ rationale + source citations in the archived [design records](./docs/archive).
 - **WireGuard, not Tailscale** — Tailscale would break the cage (it needs internet
   to reach its control plane). → [discovery](./docs/archive/discovery.md)
 - **Plain `join` + a manual whole-tunnel bring-up (`Table = off`)**, not `join
-  --whole-machine` — the latter crash-loops on Docker's read-only `/proc/sys`. →
+--whole-machine` — the latter crash-loops on Docker's read-only `/proc/sys`. →
   [discovery](./docs/archive/discovery.md), [plan](./docs/archive/plan.md)
 - **Agent environment supplied by a `run` wrapper, not a shell rc** — plain join
   wires no rc. → [plan](./docs/archive/plan.md)
-- **Agents trust the gateway CA *and* the public roots** — else relayed hosts (real
+- **Agents trust the gateway CA _and_ the public roots** — else relayed hosts (real
   certs) break tools like `uv`/`pip`. → [architecture](./docs/architecture.md)
 - **Gateway CA installed by the entrypoint**, not clawpatrol's built-in trust step
   — the latter needs `sudo`, which `no-new-privileges` refuses. →
@@ -146,6 +146,29 @@ docker compose exec -it clawbot-418 run <your-agent>
 
 Add agents by copying the `clawbot-418` service (new name, hostname, and volume).  
 To run the full evaluation, see [`tests/README.md`](./tests/README.md).
+
+## 🛠️ Deploying for real
+
+The tracked `stack/` is a **reference**, wired for the acceptance tests
+(`postman-echo` as the only in-scope endpoint, a dummy bearer credential). A real
+deployment **copies `stack/` and diverges**: fill `gateway.hcl` with your real
+upstreams + credentials, add a service per agent in `compose.yaml`, and keep
+secrets in an untracked `.env`. (Manage that copy however you like — e.g. vendor
+`stack/` and reconcile it as upstream moves.)
+
+Two halves you supply outside this repo:
+
+- **The agent and its provisioning.** The client image ships **bare** — it brings
+  up the cage and the tunnel, then waits. You launch your agent into it
+  (`docker compose exec -it clawbot-418 run <agent>`) and provision the agent's
+  home however you like (e.g. bake your own dotfiles/installer into the client
+  image).
+- **The client half of credential injection.** The gateway only _swaps_ a
+  placeholder for the real secret; the agent's home must already carry that
+  placeholder. For ChatGPT-subscription (Codex/Hermes) auth that means seeding a
+  fake, far-future JWT into the agent's `auth.json` — the provisioning layer's
+  job, not this stack's. The gateway brings the upstream into scope and injects
+  the real token. See [`docs/architecture.md`](./docs/architecture.md).
 
 ## 📊 Status
 
