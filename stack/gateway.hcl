@@ -168,10 +168,36 @@ rule "echo-default" {
 #   credential "passthrough" "openai-auth" { endpoint = https.openai-auth }
 #   rule "deny-openai-auth" { endpoint = https.openai-auth  verdict = "deny"  reason = "agents must not refresh Codex tokens; the gateway holds the real one" }
 
+# ── EXAMPLE: Telegram bot token for a Hermes agent ───────────────────────────
+# Lets a Hermes agent drive a Telegram bot WITHOUT ever holding the real bot token.
+# Hermes calls api.telegram.org/bot<TOKEN>/<method> with the token in the URL PATH
+# (not a header), and setWebhook posts a URL containing it in the body.
+#
+# Two parts; this file holds the gateway half:
+#   1. CLIENT (the agent's provisioning, NOT this file): seed the FIXED placeholder
+#      0000000000:clawpatrol-placeholder-do-not-use as TELEGRAM_BOT_TOKEN in the
+#      agent's env (e.g. ~/.hermes/.env). It is shaped to pass Hermes's own token
+#      validator, so Hermes accepts it and skips Telegram setup.
+#   2. GATEWAY (here): bring api.telegram.org into scope (MITM'd) and bind the
+#      `telegram_bot_token` credential. Its injector ReplaceAll's the placeholder with
+#      the REAL token across path/query/body — so the real token never reaches the
+#      agent and the placeholder never authenticates upstream.
+#
+# Unlike the Codex example there is NO part 3 (refresh deny): Telegram tokens don't
+# refresh and there's no second host to fence off. Connect the real token via the
+# dashboard secret store (the credential's single "Telegram bot token" slot).
+#
+# An endpoint no profile credential binds is passthrough-relayed, never injected (see
+# the in-scope notes above) — so uncomment ALL lines below AND the profile entry.
+#
+#   endpoint "https" "telegram" { hosts = ["api.telegram.org"] }
+#   credential "telegram_bot_token" "telegram" { endpoint = https.telegram }
+
 profile "default" {
   credentials = [
     bearer_token.echo-dummy,
     # openai_codex_oauth.codex,   # uncomment together with the Codex/Hermes example above
     # passthrough.openai-auth,    # ditto — puts auth.openai.com in scope so deny-openai-auth can fire
+    # telegram_bot_token.telegram, # uncomment together with the Telegram/Hermes example above
   ]
 }
