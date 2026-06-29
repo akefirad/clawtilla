@@ -60,4 +60,9 @@ ip route add default dev "$IFACE"
 ip -6 route add default dev "$IFACE" 2>/dev/null || true
 
 echo "[entrypoint] tunnel up (Table=off + manual default route); holding open"
+
+# Honor a compose `command:` if one was given (an agent may supervise a
+# long-running foreground process). Role-agnostic: a plain clawbot client has no
+# command and falls through to sleep, staying open for `docker compose exec`.
+if [ "$#" -gt 0 ]; then exec "$@"; fi
 exec sleep infinity
