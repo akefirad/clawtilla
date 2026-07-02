@@ -1,0 +1,7 @@
+# Build context = stack/. Keep it lean and make src-local a clean build:
+# drop the submodule's VCS metadata and any host-side build artifacts so the
+# image always reflects a fresh `make`, never a stale local dashboard/binary.
+clawpatrol/.git
+clawpatrol/clawpatrol
+clawpatrol/dashboard/node_modules
+clawpatrol/dashboard/dist

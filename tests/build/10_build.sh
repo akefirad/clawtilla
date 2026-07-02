@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Build both images from the single multi-stage Dockerfile and confirm the
-# gateway/client targets are produced. Proves the SHA-pinned download + the
-# stage layout actually build (covers the supply-chain pin end-to-end).
+# gateway/client targets are produced. Proves the from-source clawpatrol build
+# (builder stage → src-remote by default) + the stage layout actually build.
 . "$(cd "$(dirname "$0")" && pwd)/../lib/common.sh"
 . "$VERIFY_DIR/lib/docker.sh"
 
@@ -9,7 +9,7 @@ require_tools docker
 
 section "build — multi-stage Dockerfile (gateway + client)"
 
-expect R-BUILD-1 "docker compose build succeeds (SHA-verified clawpatrol download)"
+expect R-BUILD-1 "docker compose build succeeds (clawpatrol compiled from source)"
 BUILD_LOG="$LOG_DIR/build-$(date +%Y%m%d-%H%M%S).log"
 if dc build >"$BUILD_LOG" 2>&1; then
   pass

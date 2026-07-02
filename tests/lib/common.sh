@@ -82,7 +82,6 @@ fi
 : "${RELAY_HOST:=example.com}"
 : "${RELAY_URL:=https://example.com/}"
 : "${SECRET_PLAINTEXT:=test-secret-123}"
-: "${CLAWPATROL_RELEASES:=https://github.com/denoland/clawpatrol/releases/download}"
 # All run artifacts (logs, result ledgers, session cookies) live under one dir.
 # Never write logs outside verify/logs.
 : "${LOG_DIR:=$VERIFY_DIR/logs}"

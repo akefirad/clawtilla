@@ -13,22 +13,25 @@ if printf '%s' "$SRC" | grep -Eq '^FROM .* AS base' \
    && printf '%s' "$SRC" | grep -Eq '^FROM base AS gateway' \
    && printf '%s' "$SRC" | grep -Eq '^FROM base AS client'; then pass; else fail "missing base/gateway/client stages"; fi
 
-section "Dockerfile — supply-chain pinning"
+section "Dockerfile — clawpatrol built from source (not downloaded)"
 
-expect R-IMG-1 "clawpatrol is pinned to an explicit version"
-ver="$(printf '%s' "$SRC" | grep -E 'ARG CLAWPATROL_VERSION=' | head -1 | sed 's/.*=//')"
-assert_match "$ver" '^v[0-9]+\.[0-9]+\.[0-9]+'
+expect R-IMG-1 "clawpatrol is compiled via make, not fetched as a prebuilt binary"
+if printf '%s' "$SRC" | grep -Eq 'make "\$CLAWPATROL_MAKE_TARGET"' \
+   && ! printf '%s' "$SRC" | grep -q 'releases/download' \
+   && ! printf '%s' "$SRC" | grep -q 'install.sh'; then pass; else fail "not a source build (download/install.sh present or make target missing)"; fi
 
-expect R-IMG-1b "per-arch SHA256 pins are present (amd64 + arm64)"
-if printf '%s' "$SRC" | grep -Eq 'CLAWPATROL_SHA256_amd64=[0-9a-f]{64}' \
-   && printf '%s' "$SRC" | grep -Eq 'CLAWPATROL_SHA256_arm64=[0-9a-f]{64}'; then pass; else fail "missing 64-hex SHA pins"; fi
+expect R-IMG-1b "dual source modes: src-remote (default) + src-local"
+if printf '%s' "$SRC" | grep -Eq '^FROM builder-base AS src-local' \
+   && printf '%s' "$SRC" | grep -Eq '^FROM builder-base AS src-remote' \
+   && printf '%s' "$SRC" | grep -Eq '^ARG CLAWPATROL_SRC=src-remote' \
+   && printf '%s' "$SRC" | grep -Eq '^FROM \$\{CLAWPATROL_SRC\} AS builder'; then pass; else fail "src-local/src-remote select pattern missing"; fi
 
-expect R-IMG-1c "downloaded binary is verified with sha256sum -c"
-assert_match "$SRC" 'sha256sum -c'
+expect R-IMG-1c "remote mode is pinnable via CLAWPATROL_REPO + CLAWPATROL_REF"
+if printf '%s' "$SRC" | grep -Eq 'ARG CLAWPATROL_REPO=' \
+   && printf '%s' "$SRC" | grep -Eq 'ARG CLAWPATROL_REF='; then pass; else fail "missing CLAWPATROL_REPO/CLAWPATROL_REF args"; fi
 
-expect R-IMG-1d "binary is fetched from the pinned version URL, not install.sh"
-if printf '%s' "$SRC" | grep -q 'releases/download/${CLAWPATROL_VERSION}' \
-   && ! printf '%s' "$SRC" | grep -q 'install.sh'; then pass; else fail "uses install.sh or unpinned URL"; fi
+expect R-IMG-1d "build flavor is selectable (CLAWPATROL_MAKE_TARGET, default unstripped 'build')"
+if printf '%s' "$SRC" | grep -Eq 'ARG CLAWPATROL_MAKE_TARGET=build'; then pass; else fail "CLAWPATROL_MAKE_TARGET arg missing or not defaulting to build"; fi
 
 section "Dockerfile — client stage"
 
