@@ -25,7 +25,11 @@ COPY clawpatrol /src
 # -- source mode B: remote clone (template / CI / release)
 FROM builder-base AS src-remote
 ARG CLAWPATROL_REPO=https://github.com/akefirad/clawpatrol
-ARG CLAWPATROL_REF=main
+# Pinned in lockstep with the stack/clawpatrol submodule (enforced by
+# tests/static/50) — bump both together. A template/release build overrides
+# this with its own tag. NOT a floating branch: a bare src-remote build must
+# be reproducible.
+ARG CLAWPATROL_REF=v0.5.1
 RUN git clone "$CLAWPATROL_REPO" /src \
     && git -C /src checkout --detach "$CLAWPATROL_REF"
 

@@ -34,4 +34,19 @@ else
   skip "git unavailable or submodule not initialised"
 fi
 
+expect R-IMG-2d "Dockerfile CLAWPATROL_REF default == submodule commit (lockstep, not a floating branch)"
+ref="$(printf '%s' "$SRC" | grep -E 'ARG CLAWPATROL_REF=' | head -1 | sed 's/.*=//')"
+if have git && { [ -d "$sub/.git" ] || [ -f "$sub/.git" ]; }; then
+  head="$(git -C "$sub" rev-parse HEAD 2>/dev/null)"
+  tag="$(git -C "$sub" describe --tags --exact-match HEAD 2>/dev/null || true)"
+  # Accept an exact tag, the full commit SHA, or a short-SHA prefix of HEAD.
+  if [ -n "$ref" ] && { [ "$ref" = "$tag" ] || [ "$ref" = "$head" ] || case "$head" in "$ref"*) [ "${#ref}" -ge 7 ] ;; *) false ;; esac; }; then
+    pass
+  else
+    fail "Dockerfile ref '$ref' is not the submodule's tag ('$tag') or commit ('$head') — a moving branch is not allowed"
+  fi
+else
+  skip "git unavailable or submodule not initialised"
+fi
+
 finish
