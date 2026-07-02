@@ -20,10 +20,10 @@ if printf '%s' "$SRC" | grep -Eq 'make "\$CLAWPATROL_MAKE_TARGET"' \
    && ! printf '%s' "$SRC" | grep -q 'releases/download' \
    && ! printf '%s' "$SRC" | grep -q 'install.sh'; then pass; else fail "not a source build (download/install.sh present or make target missing)"; fi
 
-expect R-IMG-1b "dual source modes: src-local (default) + src-remote"
+expect R-IMG-1b "dual source modes: src-remote (default) + src-local"
 if printf '%s' "$SRC" | grep -Eq '^FROM builder-base AS src-local' \
    && printf '%s' "$SRC" | grep -Eq '^FROM builder-base AS src-remote' \
-   && printf '%s' "$SRC" | grep -Eq '^ARG CLAWPATROL_SRC=src-local' \
+   && printf '%s' "$SRC" | grep -Eq '^ARG CLAWPATROL_SRC=src-remote' \
    && printf '%s' "$SRC" | grep -Eq '^FROM \$\{CLAWPATROL_SRC\} AS builder'; then pass; else fail "src-local/src-remote select pattern missing"; fi
 
 expect R-IMG-1c "remote mode is pinnable via CLAWPATROL_REPO + CLAWPATROL_REF"

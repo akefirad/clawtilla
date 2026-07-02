@@ -40,7 +40,7 @@ tests/
 │   ├── 20_dockerfile.sh # multi-stage layout, source build (dual mode), no-USER, run wrapper
 │   ├── 30_hcl.sh        # listen binding, profile/credential/rule presence, validate + F4/F6 lints
 │   ├── 40_scripts.sh    # shellcheck + entrypoint logic (Table=off, plain join, …)
-│   └── 50_source_lockstep.sh # source-build lockstep: submodule present, Dockerfile repo/ref default == submodule origin/commit
+│   └── 50_remote_pin.sh # src-remote default is a pinned, resolvable upstream ref (tag/SHA, not a branch)
 ├── build/
 │   └── 10_build.sh      # docker compose build both targets
 └── runtime/             # live stack required (brought up by 00_bringup.sh)
@@ -122,9 +122,9 @@ bash run.sh
 - **Docker Desktop** (the design targets 4.73 on macOS arm64) with `docker compose` v2.
 - **curl** and **jq** (`brew install jq`) — required for runtime/JSON checks.
 - **shellcheck** (`brew install shellcheck`) — optional; static script linting skips without it.
-- **git** — for the submodule-lockstep check; skips without it.
-- Network egress on the Mac for the build (pull base image + clawpatrol binary)
-  and for the supply-chain SHA check.
+- **git** — for the src-remote ref-resolve check; skips without it.
+- Network egress on the Mac for the build (pull base + toolchain images, clone +
+  compile clawpatrol) and for the ref-resolve check.
 
 > **Sandbox note:** this repo enables a `beforeShellExecution` hook. If you run
 > the suite from an automated agent and shell calls are being blocked, run it
@@ -392,7 +392,7 @@ security-review finding.
 | ID | Requirement | Source | How verified | Checks |
 |----|-------------|--------|--------------|--------|
 | R-IMG-1 | clawpatrol built from source (`make`), not downloaded; dual src-local/src-remote modes, pinnable + selectable flavor | plan Step 2 | parse Dockerfile | static/20 |
-| R-IMG-2 | vendored submodule at `stack/clawpatrol` is the src-local source; remote-mode repo default == submodule origin | plan Step 2 | git + parse Dockerfile | static/50 |
+| R-IMG-2 | src-remote default (`CLAWPATROL_REPO`/`REF`) is a pinned, resolvable upstream ref (tag/SHA, not a branch) | plan Step 2 | parse Dockerfile + `git ls-remote` | static/50 |
 | R-IMG-3 | client image has no `USER` line (root for bring-up) | plan Step 4 | parse Dockerfile (client stage) | static/20 |
 | R-IMG-4 | one multi-stage Dockerfile → gateway/client targets | plan Step 2 | parse Dockerfile | static/20 |
 | R-BUILD | both images build cleanly | plan Step 6 | `docker compose build` | build/10 |

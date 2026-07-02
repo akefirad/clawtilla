@@ -121,13 +121,16 @@ rationale + source citations in the archived [design records](./docs/archive).
 - [`docs/`](./docs) — [architecture](./docs/architecture.md) (the design record,
   as built) and [`archive/`](./docs/archive) (the historical discovery + plan,
   kept for rationale and source citations).
-- [`stack/clawpatrol`](./stack/clawpatrol) — the gateway source (fork
-  `akefirad/clawpatrol`), vendored as a submodule and compiled into the image.
+- clawpatrol — the gateway source, **compiled from source** in the image. By
+  default the builder clones a pinned upstream release
+  ([`denoland/clawpatrol@v0.5.1`](https://github.com/denoland/clawpatrol));
+  override `CLAWPATROL_REPO`/`CLAWPATROL_REF` (or vendor a `clawpatrol/` checkout
+  and set `CLAWPATROL_SRC=src-local`) to build a fork. See [`stack/Dockerfile`](./stack/Dockerfile).
 
 ## 🚀 Quick start
 
 ```sh
-git clone --recurse-submodules <repo-url>
+git clone <repo-url>
 cd <repo>/stack
 
 # 1. Bring up the gateway on its own — no ClawBots yet.

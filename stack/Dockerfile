@@ -1,18 +1,21 @@
 # syntax=docker/dockerfile:1.7
 
-# Selects which source stage feeds `builder` (src-local | src-remote). Declared
+# Selects which source stage feeds `builder` (src-remote | src-local). Declared
 # here (before any FROM) because a FROM can only interpolate a *global* ARG.
-ARG CLAWPATROL_SRC=src-local
+ARG CLAWPATROL_SRC=src-remote
 
 # ---- builder: compile clawpatrol from source (Go + Deno) -----------------
 # clawpatrol is BUILT here, not downloaded.
 # Two source modes feed the `builder` stage, selected by CLAWPATROL_SRC:
-#   src-local  (default) — build the vendored stack/clawpatrol working tree
-#                          AS-IS. Edit the submodule, rebuild, done — no commit,
-#                          push, or ref bump. This is the dev inner loop.
-#   src-remote           — git clone CLAWPATROL_REPO @ CLAWPATROL_REF. The
-#                          template / CI / release path; override REPO to point
-#                          at denoland/clawpatrol + a release tag.
+#   src-remote (default) — git clone CLAWPATROL_REPO @ CLAWPATROL_REF (a pinned
+#                          upstream release). Reproducible and self-contained;
+#                          this is what a template consumer / CI / release uses.
+#   src-local            — build a vendored ./clawpatrol working tree AS-IS
+#                          (opt-in: set CLAWPATROL_SRC=src-local and drop a
+#                          clawpatrol/ checkout in the build context). Gives an
+#                          edit→rebuild loop with no push/ref bump; this is how
+#                          a deployment that hacks on its own fork builds (see
+#                          the private/clawtilla deployment).
 # Toolchain digest-pinned (like the ubuntu runtime base below) so the binary
 # that enforces policy has reproducible provenance. Bump deliberately.
 FROM golang:1.26-bookworm@sha256:b305420a68d0f229d91eb3b3ed9e519fcf2cf5461da4bef997bf927e8c0bfd2b AS builder-base
@@ -21,20 +24,22 @@ FROM golang:1.26-bookworm@sha256:b305420a68d0f229d91eb3b3ed9e519fcf2cf5461da4bef
 # so it is part of the artifact's provenance. (Tracks CI's deno v2.x line.)
 COPY --from=denoland/deno:bin@sha256:978d3d9d73452234f830739773a0a1a7e3b60463da3dfbcd99375e86ac5481e5 /deno /usr/local/bin/deno
 
-# -- source mode A: local vendored working tree (dev default)
-FROM builder-base AS src-local
-COPY clawpatrol /src
-
-# -- source mode B: remote clone (template / CI / release)
+# -- source mode A: remote clone (default; template / CI / release)
 FROM builder-base AS src-remote
-ARG CLAWPATROL_REPO=https://github.com/akefirad/clawpatrol
-# Pinned in lockstep with the stack/clawpatrol submodule (enforced by
-# tests/static/50) — bump both together. A template/release build overrides
-# this with its own tag. NOT a floating branch: a bare src-remote build must
-# be reproducible.
+# Defaults to canonical upstream at a pinned release tag, so a bare build is
+# reproducible and resolves out of the box. Override REPO+REF to build a fork
+# (enforced pinned — not a floating branch — by tests/static/50).
+ARG CLAWPATROL_REPO=https://github.com/denoland/clawpatrol
 ARG CLAWPATROL_REF=v0.5.1
 RUN git clone "$CLAWPATROL_REPO" /src \
     && git -C /src checkout --detach "$CLAWPATROL_REF"
+
+# -- source mode B: local vendored working tree (opt-in; deployment dev loop)
+# No clawpatrol/ is vendored in this template — a consumer that wants src-local
+# drops its own checkout here (the private/clawtilla deployment vendors its fork
+# as a submodule). Kept out of the default path so a bare build never needs it.
+FROM builder-base AS src-local
+COPY clawpatrol /src
 
 # Buildx resolves the global ${CLAWPATROL_SRC} to one of the source stages above.
 FROM ${CLAWPATROL_SRC} AS builder
