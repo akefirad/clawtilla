@@ -1,31 +1,55 @@
 # syntax=docker/dockerfile:1.7
 
-# ---- base: OS + pinned, SHA-verified clawpatrol --------------------------
-# Keep oss/clawpatrol submodule and the deployed binary in lockstep:
-# bumping CLAWPATROL_VERSION means moving the submodule to the matching
-# tag AND updating the two SHA256s below (from that release's SHA256SUMS).
+# Selects which source stage feeds `builder` (src-local | src-remote). Declared
+# here (before any FROM) because a FROM can only interpolate a *global* ARG.
+ARG CLAWPATROL_SRC=src-local
 
+# ---- builder: compile clawpatrol from source (Go + Deno) -----------------
+# clawpatrol is BUILT here, not downloaded.
+# Two source modes feed the `builder` stage, selected by CLAWPATROL_SRC:
+#   src-local  (default) — build the vendored stack/clawpatrol working tree
+#                          AS-IS. Edit the submodule, rebuild, done — no commit,
+#                          push, or ref bump. This is the dev inner loop.
+#   src-remote           — git clone CLAWPATROL_REPO @ CLAWPATROL_REF. The
+#                          template / CI / release path; override REPO to point
+#                          at denoland/clawpatrol + a release tag.
+FROM golang:1.26-bookworm AS builder-base
+# Deno bundles the dashboard (make dashboard -> //go:embed) before `go build`.
+# Pull just the deno binary from the official image (tracks CI's deno v2.x).
+COPY --from=denoland/deno:bin /deno /usr/local/bin/deno
+
+# -- source mode A: local vendored working tree (dev default)
+FROM builder-base AS src-local
+COPY clawpatrol /src
+
+# -- source mode B: remote clone (template / CI / release)
+FROM builder-base AS src-remote
+ARG CLAWPATROL_REPO=https://github.com/akefirad/clawpatrol
+ARG CLAWPATROL_REF=main
+RUN git clone "$CLAWPATROL_REPO" /src \
+    && git -C /src checkout --detach "$CLAWPATROL_REF"
+
+# Buildx resolves the global ${CLAWPATROL_SRC} to one of the source stages above.
+FROM ${CLAWPATROL_SRC} AS builder
+# build   = unstripped, keeps file:line in panics (best while hacking the gateway)
+# release = stripped (-s -w -trimpath) for lean packaging
+ARG CLAWPATROL_MAKE_TARGET=build
+ENV DENO_DIR=/deno-dir
+WORKDIR /src
+RUN --mount=type=cache,target=/root/.cache/go-build \
+    --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/deno-dir \
+    make "$CLAWPATROL_MAKE_TARGET"
+
+# ---- base: OS + clawpatrol built above -----------------------------------
 FROM ubuntu:noble-20260509.1@sha256:786a8b558f7be160c6c8c4a54f9a57274f3b4fb1491cf65146521ae77ff1dc54 AS base
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates curl \
     && rm -rf /var/lib/apt/lists/*
 
-ARG TARGETARCH
-ARG CLAWPATROL_VERSION=v0.5.1
-ARG CLAWPATROL_SHA256_amd64=75c2a181811ca5d0f7ef4854700a10a8d353e27449d8cf6ec9cf804bff6bef2a
-ARG CLAWPATROL_SHA256_arm64=d0b7ff699f61a35a1c4b20fa399c99a2c868030f186d594bf386455dd24738b5
-RUN set -eu; \
-    arch="${TARGETARCH:-$(dpkg --print-architecture)}"; \
-    case "$arch" in \
-      amd64) sha="$CLAWPATROL_SHA256_amd64" ;; \
-      arm64) sha="$CLAWPATROL_SHA256_arm64" ;; \
-      *) echo "unsupported arch: $arch" >&2; exit 1 ;; \
-    esac; \
-    url="https://github.com/denoland/clawpatrol/releases/download/${CLAWPATROL_VERSION}/clawpatrol-linux-${arch}"; \
-    curl -fsSL -o /usr/local/bin/clawpatrol "$url"; \
-    echo "${sha}  /usr/local/bin/clawpatrol" | sha256sum -c -; \
-    chmod 0755 /usr/local/bin/clawpatrol
+COPY --from=builder /src/clawpatrol /usr/local/bin/clawpatrol
+RUN chmod 0755 /usr/local/bin/clawpatrol
 
 # ---- gateway -------------------------------------------------------------
 FROM base AS gateway

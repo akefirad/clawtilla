@@ -121,7 +121,8 @@ rationale + source citations in the archived [design records](./docs/archive).
 - [`docs/`](./docs) — [architecture](./docs/architecture.md) (the design record,
   as built) and [`archive/`](./docs/archive) (the historical discovery + plan,
   kept for rationale and source citations).
-- [`oss/clawpatrol`](./oss) — the upstream gateway, pinned as a submodule.
+- [`stack/clawpatrol`](./stack/clawpatrol) — the gateway source (fork
+  `akefirad/clawpatrol`), vendored as a submodule and compiled into the image.
 
 ## 🚀 Quick start
 

@@ -37,10 +37,10 @@ tests/
 │   └── dashboard.sh     # clawpatrol gateway API client (login, approve, analytics, …)
 ├── static/              # no docker run required
 │   ├── 10_compose.sh    # network topology, port exposure, gateway/client hardening
-│   ├── 20_dockerfile.sh # multi-stage layout, SHA pinning, no-USER, run wrapper
+│   ├── 20_dockerfile.sh # multi-stage layout, source build (dual mode), no-USER, run wrapper
 │   ├── 30_hcl.sh        # listen binding, profile/credential/rule presence, validate + F4/F6 lints
 │   ├── 40_scripts.sh    # shellcheck + entrypoint logic (Table=off, plain join, …)
-│   └── 50_binary_pin.sh # submodule tag == pin, release SHA256 == Dockerfile SHA (network)
+│   └── 50_binary_pin.sh # source-build lockstep: submodule present, Dockerfile repo default == submodule origin
 ├── build/
 │   └── 10_build.sh      # docker compose build both targets
 └── runtime/             # live stack required (brought up by 00_bringup.sh)
@@ -391,8 +391,8 @@ security-review finding.
 
 | ID | Requirement | Source | How verified | Checks |
 |----|-------------|--------|--------------|--------|
-| R-IMG-1 | clawpatrol pinned by version + per-arch SHA256, verified | plan Step 2 | parse Dockerfile + match release SHA256SUMS | static/20, static/50 |
-| R-IMG-2 | submodule tag == `CLAWPATROL_VERSION` (lockstep) | plan Step 2 | `git describe` on submodule | static/50 |
+| R-IMG-1 | clawpatrol built from source (`make`), not downloaded; dual src-local/src-remote modes, pinnable + selectable flavor | plan Step 2 | parse Dockerfile | static/20 |
+| R-IMG-2 | vendored submodule at `stack/clawpatrol` is the src-local source; remote-mode repo default == submodule origin | plan Step 2 | git + parse Dockerfile | static/50 |
 | R-IMG-3 | client image has no `USER` line (root for bring-up) | plan Step 4 | parse Dockerfile (client stage) | static/20 |
 | R-IMG-4 | one multi-stage Dockerfile → gateway/client targets | plan Step 2 | parse Dockerfile | static/20 |
 | R-BUILD | both images build cleanly | plan Step 6 | `docker compose build` | build/10 |

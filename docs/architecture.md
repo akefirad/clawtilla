@@ -1,7 +1,7 @@
 # Clawtilla — architecture
 
 The architecture of record for Clawtilla, as built and validated. For the design
-deliberation and full rationale (with `oss/clawpatrol` source citations) see the
+deliberation and full rationale (with `stack/clawpatrol` source citations) see the
 archived [discovery](./archive/discovery.md) and [plan](./archive/plan.md); for the
 normative requirements and the test harness see [`tests/`](../tests/).
 
@@ -107,10 +107,12 @@ catch-all `deny` remains mandatory.)*
 - [`stack/client.sh`](../stack/client.sh) — client entrypoint: enrollment-aware
   (join once, bring the tunnel up always), install the CA into the system trust
   store, bring the tunnel up with `Table = off` + a manual default route.
-- [`oss/clawpatrol`](../oss/clawpatrol) — the upstream gateway, pinned as a git
-  submodule. **The real enforcement logic (verdict/splice, `unknown_host`
-  handling, credential injection, auth) lives here, not in the stack** — verify
-  mechanism claims against this source.
+- [`stack/clawpatrol`](../stack/clawpatrol) — the gateway source, vendored as a
+  git submodule (fork `akefirad/clawpatrol`, `upstream` = `denoland/clawpatrol`)
+  and **compiled into the image** by the Dockerfile's builder stage (src-local).
+  **The real enforcement logic (verdict/splice, `unknown_host` handling,
+  credential injection, auth) lives here, not in the stack** — verify mechanism
+  claims against this source.
 
 ## Key decisions
 
@@ -239,7 +241,7 @@ hostile co-tenant.
 ## Reviewed residual findings
 
 An external adversarial network review ([`review.md`](./review.md)) checked these
-guarantees against the `oss/clawpatrol` source. Beyond the accepted N-nodes it
+guarantees against the `stack/clawpatrol` source. Beyond the accepted N-nodes it
 also flagged the following; this is the repo's disposition:
 
 - **F1 (open)** — the WireGuard relay is promiscuous: it forwards agent traffic to
@@ -262,13 +264,14 @@ also flagged the following; this is the repo's disposition:
 
 ## Status
 
-v0, built against clawpatrol `v0.5.1` (the `CLAWPATROL_VERSION` pin in
-`stack/Dockerfile`). The deployed binary and the `oss/clawpatrol` submodule are
-meant to stay in lockstep — bumping the version means moving the submodule to the
-matching tag and updating the SHA256s. To confirm lockstep, run `git describe
---tags` inside the submodule (NOT `git submodule status`, which only sees
-annotated tags and can print a misleading older tag + commit offset even when HEAD
-sits exactly on a release). The network security posture is reviewed by
+v0, built from the `stack/clawpatrol` submodule (fork `akefirad/clawpatrol`).
+clawpatrol is **compiled from source** in the Dockerfile rather than downloaded:
+the default `src-local` mode builds the vendored submodule working tree as-is
+(so a local edit → rebuild needs no push), while `src-remote`
+(`--build-arg CLAWPATROL_SRC=src-remote`) clones `CLAWPATROL_REPO`@`CLAWPATROL_REF`
+for template/CI/release builds. There is no binary SHA to keep in lockstep any
+more; the image simply contains whatever the submodule (or the pinned ref) builds.
+The network security posture is reviewed by
 the [`clawtilla-security-review`](../.claude/skills/clawtilla-security-review/)
 skill; the runnable test suites live in [`tests/`](../tests/).
 
