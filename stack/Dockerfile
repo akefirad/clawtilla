@@ -13,10 +13,13 @@ ARG CLAWPATROL_SRC=src-local
 #   src-remote           — git clone CLAWPATROL_REPO @ CLAWPATROL_REF. The
 #                          template / CI / release path; override REPO to point
 #                          at denoland/clawpatrol + a release tag.
-FROM golang:1.26-bookworm AS builder-base
+# Toolchain digest-pinned (like the ubuntu runtime base below) so the binary
+# that enforces policy has reproducible provenance. Bump deliberately.
+FROM golang:1.26-bookworm@sha256:b305420a68d0f229d91eb3b3ed9e519fcf2cf5461da4bef997bf927e8c0bfd2b AS builder-base
 # Deno bundles the dashboard (make dashboard -> //go:embed) before `go build`.
-# Pull just the deno binary from the official image (tracks CI's deno v2.x).
-COPY --from=denoland/deno:bin /deno /usr/local/bin/deno
+# Digest-pinned too — it is embedded into the gateway binary via //go:embed,
+# so it is part of the artifact's provenance. (Tracks CI's deno v2.x line.)
+COPY --from=denoland/deno:bin@sha256:978d3d9d73452234f830739773a0a1a7e3b60463da3dfbcd99375e86ac5481e5 /deno /usr/local/bin/deno
 
 # -- source mode A: local vendored working tree (dev default)
 FROM builder-base AS src-local
@@ -40,6 +43,10 @@ FROM ${CLAWPATROL_SRC} AS builder
 ARG CLAWPATROL_MAKE_TARGET=build
 ENV DENO_DIR=/deno-dir
 WORKDIR /src
+# Single build platform: the Go/Deno toolchain runs natively. A multi-arch
+# `buildx --platform linux/amd64,linux/arm64` build has no BUILDPLATFORM +
+# GOARCH cross-compile wiring here, so each arch would build under QEMU
+# (correct, just slow). No multi-arch CI today; add cross-compile if that changes.
 RUN --mount=type=cache,target=/root/.cache/go-build \
     --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/deno-dir \

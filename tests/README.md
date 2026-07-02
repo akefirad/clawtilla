@@ -40,7 +40,7 @@ tests/
 │   ├── 20_dockerfile.sh # multi-stage layout, source build (dual mode), no-USER, run wrapper
 │   ├── 30_hcl.sh        # listen binding, profile/credential/rule presence, validate + F4/F6 lints
 │   ├── 40_scripts.sh    # shellcheck + entrypoint logic (Table=off, plain join, …)
-│   └── 50_binary_pin.sh # source-build lockstep: submodule present, Dockerfile repo default == submodule origin
+│   └── 50_source_lockstep.sh # source-build lockstep: submodule present, Dockerfile repo/ref default == submodule origin/commit
 ├── build/
 │   └── 10_build.sh      # docker compose build both targets
 └── runtime/             # live stack required (brought up by 00_bringup.sh)

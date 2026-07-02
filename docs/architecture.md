@@ -108,8 +108,10 @@ catch-all `deny` remains mandatory.)*
   (join once, bring the tunnel up always), install the CA into the system trust
   store, bring the tunnel up with `Table = off` + a manual default route.
 - [`stack/clawpatrol`](../stack/clawpatrol) — the gateway source, vendored as a
-  git submodule (fork `akefirad/clawpatrol`, `upstream` = `denoland/clawpatrol`)
-  and **compiled into the image** by the Dockerfile's builder stage (src-local).
+  git submodule (`origin` = the fork `akefirad/clawpatrol`; add a `denoland`
+  `upstream` remote locally to pull releases — `.gitmodules` only records
+  `origin`, so a fresh `submodule update --init` won't have it) and **compiled
+  into the image** by the Dockerfile's builder stage (src-local).
   **The real enforcement logic (verdict/splice, `unknown_host` handling,
   credential injection, auth) lives here, not in the stack** — verify mechanism
   claims against this source.
