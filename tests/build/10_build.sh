@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Build both images from the single multi-stage Dockerfile and confirm the
 # gateway/client targets are produced. Proves the from-source clawpatrol build
-# (builder stage → src-local by default) + the stage layout actually build.
+# (builder stage → src-remote by default) + the stage layout actually build.
 . "$(cd "$(dirname "$0")" && pwd)/../lib/common.sh"
 . "$VERIFY_DIR/lib/docker.sh"
 
