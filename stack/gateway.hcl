@@ -152,7 +152,12 @@ rule "echo-default" {
 # Use a plain `https` endpoint here. The `openai_codex_https` endpoint type adds a
 # synthetic-JWT env push-down plus a JWKS / agent-task responder that ONLY the
 # official `codex` CLI's AgentIdentity mode needs — Hermes routes to chatgpt.com
-# on its own and uses none of it.
+# on its own and uses none of it. (Note for the official-CLI case: as of
+# clawpatrol v0.5.3 `openai_codex_https` auto-claims auth.openai.com too — codex
+# ≥0.142 registers agent tasks there — so you must NOT also declare a separate
+# auth.openai.com endpoint (same-host dispatch is last-writer-wins). Police it
+# with a path-scoped deny rule ON the codex endpoint instead; CEL has no host
+# field. See the private/clawtilla deployment for a worked example.)
 #
 # Uncomment ALL the lines below AND add `openai_codex_oauth.codex` and
 # `passthrough.openai-auth` to the profile below.

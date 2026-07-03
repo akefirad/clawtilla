@@ -78,8 +78,9 @@ a profile reaches it via the transitive closure profile → credential → endpo
 a bare `endpoint` + `rule` bound to no profile is **dead config**, relayed not
 policed; and (3) an in-scope endpoint **fails open on no-rule-match** (clawpatrol
 denies only on an explicit `deny` verdict), so every `endpoint` with an `allow`
-rule needs a lowest-priority catch-all `deny`. *(Verified still true in v0.5.1:
-the HTTPS path takes `MatchRequest` → nil-on-no-match, and `main.go` denies only
+rule needs a lowest-priority catch-all `deny`. *(Verified still true in v0.5.3
+— `main.go` is byte-identical to v0.5.1 here: the HTTPS path takes `MatchRequest`
+→ nil-on-no-match, and `main.go` denies only
 when `cr.Outcome.Verdict == "deny"`. The v0.2.5 "viral CEL unknowns" change
 (#633) added fail-**closed** behaviour only for requests clawpatrol could not
 honestly evaluate — bytes truncated at the inspection buffer or unparseable, which
@@ -96,7 +97,7 @@ catch-all `deny` remains mandatory.)*
   `CLAWPATROL_SECRET_ECHO_DUMMY` *test* secret.
 - [`stack/Dockerfile`](../stack/Dockerfile) — multi-stage `builder` (Go + Deno,
   digest-pinned) → `base` → `gateway` / `client`. clawpatrol is compiled from a
-  pinned source (default: clone `denoland/clawpatrol@v0.5.1`; opt-in `src-local`
+  pinned source (default: clone `denoland/clawpatrol@v0.5.3`; opt-in `src-local`
   builds a vendored checkout); the gateway stage adds no caps (userspace WG), the
   client stage adds the WireGuard + diagnostic tooling and carries no `USER` line.
 - [`stack/gateway.hcl`](../stack/gateway.hcl) — policy: `dashboard_listen`,
@@ -145,7 +146,7 @@ Condensed; full rationale and source citations in the archived
 - **Manual, fingerprint-verified enrollment.** No WG `--auto-approve` exists;
   approval is mandatory and must bind to a verified per-client identity — a
   rogue/auto-approved device gets a profile and real injected credentials.
-  *(v0.5.1: confirmed — clawpatrol's `autoApprove` is opt-in to the Tailscale
+  *(v0.5.3: confirmed — `setup.go` unchanged since v0.5.1 — clawpatrol's `autoApprove` is opt-in to the Tailscale
   `--login` bootstrap path only (`setup.go`: "auto-approve unexpected status…"
   only after a tsnet whois the gateway trusts); our plain WG `join` never takes
   it, so approval stays a manual operator action. v0.2.7/v0.2.8 also added
@@ -257,7 +258,7 @@ also flagged the following; this is the repo's disposition:
 - **F2 (open)** — DNS escapes containment: tunneled DNS content is not run through
   the rule engine, and a malicious agent can query Docker's `127.0.0.11` embedded
   resolver directly, bypassing the gateway entirely. A low-bandwidth exfil / C2
-  channel. (The `127.0.0.11`-bypass half is now confirmed live: the v0.5.1
+  channel. (The `127.0.0.11`-bypass half is confirmed live, still on v0.5.3: the
   runtime suite's R-GAP-DNS resolved `example.com` off-tunnel via `127.0.0.11`.)
 - **F3 (mitigated — runbook)** — first-run dashboard-password claim; see N3.
 - **F4 (fixed)** — the stack advertised a read-only GitHub allowlist (`ghapi`)
@@ -269,7 +270,7 @@ also flagged the following; this is the repo's disposition:
 
 v0. clawpatrol is **compiled from source** in the Dockerfile rather than
 downloaded. The default `src-remote` mode clones a pinned upstream release
-(`denoland/clawpatrol@v0.5.1`), so a bare build is reproducible and resolves out
+(`denoland/clawpatrol@v0.5.3`), so a bare build is reproducible and resolves out
 of the box; `src-local` (`--build-arg CLAWPATROL_SRC=src-local` + a vendored
 `clawpatrol/` checkout in the build context) builds that working tree as-is for
 an edit→rebuild loop with no push. This template vendors no clawpatrol source;
@@ -323,3 +324,29 @@ this stack uses is byte-identical. The N1 splice, unprofiled fail-open, and
 (`codexSpliceOutput`) is observe-only (feeds the GenAI span, gated on
 `genai_telemetry`) and does not alter the agent's response. OTel remains opt-in
 and unadopted.
+
+The subsequent `v0.5.1 → v0.5.3` bump (two patch releases) is entirely bug
+fixes plus two additive items, with **no breaking changes**: DNS synth returns
+cacheable NODATA/SOA instead of NXDOMAIN (#743), the raw-WebSocket bridge
+preserves explicit upstream `host:port` (#744), dashboard/Notion-MCP OAuth fixes
+(#747, #748), a new `--plugin-cache-dir` flag for `extplugin` dev tooling (#749),
+and codex-CLI ≥0.142 support (#750). Every load-bearing path this stack depends
+on is **byte-identical** to v0.5.1 — verified by diff: `main.go` (the N1 splice
+`ep == nil → splice` and the deny-only-on-explicit-`deny` verdict, plus
+`codexSpliceOutput`), `compile.go` (unprofiled fail-open + endpoint closure),
+`setup.go` (`autoApprove`), `wireguard.go` (the promiscuous relay, F1), and
+`clawpatrol env` / `join`. The `schema_version` window is unchanged (`0..1`; pin
+stays `1`), so no `gateway.hcl` change is required for the public template, which
+uses only plain `https` endpoints (the Codex example stays commented out). The
+one behaviourally-relevant change is scoped to the **`openai_codex_https`
+endpoint type**, which the public template does not use live: on v0.5.3 it
+auto-claims `auth.openai.com` (codex ≥0.142 moved agent task-registration there
+and removed the env override clawpatrol relied on at ≤0.141), stubbing only the
+task-register path and forwarding login/`/oauth/token` refresh untouched with
+credential injection skipped on that host. A deployment that both uses
+`openai_codex_https` **and** wants to police `auth.openai.com` can no longer do
+so with a *separate* endpoint (same-host `HostIndex` is last-writer-wins) — it
+attaches a path-scoped `deny` rule to the codex endpoint itself (CEL has no host
+field); see the live [`private/clawtilla`](https://github.com/akefirad/dotfiles)
+deployment. Validated on Docker Desktop: static + build + runtime (see
+`tests/logs/`).

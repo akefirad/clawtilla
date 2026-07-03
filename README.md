@@ -123,7 +123,7 @@ rationale + source citations in the archived [design records](./docs/archive).
   kept for rationale and source citations).
 - clawpatrol — the gateway source, **compiled from source** in the image. By
   default the builder clones a pinned upstream release
-  ([`denoland/clawpatrol@v0.5.1`](https://github.com/denoland/clawpatrol));
+  ([`denoland/clawpatrol@v0.5.3`](https://github.com/denoland/clawpatrol));
   override `CLAWPATROL_REPO`/`CLAWPATROL_REF` (or vendor a `clawpatrol/` checkout
   and set `CLAWPATROL_SRC=src-local`) to build a fork. See [`stack/Dockerfile`](./stack/Dockerfile).
 
@@ -176,7 +176,7 @@ Two halves you supply outside this repo:
 
 ## 📊 Status
 
-v0 — Built against clawpatrol `v0.5.1`.
+v0 — Built against clawpatrol `v0.5.3`.
 
 ## ⚖️ License
 
