@@ -30,7 +30,7 @@ FROM builder-base AS src-remote
 # reproducible and resolves out of the box. Override REPO+REF to build a fork
 # (enforced pinned — not a floating branch — by tests/static/50).
 ARG CLAWPATROL_REPO=https://github.com/denoland/clawpatrol
-ARG CLAWPATROL_REF=v0.5.1
+ARG CLAWPATROL_REF=v0.5.3
 RUN git clone "$CLAWPATROL_REPO" /src \
     && git -C /src checkout --detach "$CLAWPATROL_REF"
 
