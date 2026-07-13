@@ -1,0 +1,47 @@
+[Unit]
+Description=clawpatrol gateway (Tailscale mode)
+Documentation=https://clawpatrol.dev
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/clawpatrol gateway /etc/clawpatrol/gateway.hcl
+
+# tsnet is userspace — no root, no system tailscaled, no privileged ports.
+# systemd mints an ephemeral user and owns /var/lib/clawpatrol for it. If a
+# first-boot permission snag appears, swap DynamicUser for `User=root` to
+# unblock, then revisit.
+DynamicUser=yes
+StateDirectory=clawpatrol
+StateDirectoryMode=0700
+
+# Secrets (TS_AUTHKEY + the OAuth client id/secret) live here, root-owned 0600.
+# systemd reads it as root before dropping privileges, so the values never need
+# to be world-readable, in the HCL, or in git. See gateway.env.example.
+EnvironmentFile=/etc/clawpatrol/gateway.env
+# Telemetry off. Not a secret, so it lives in the unit rather than the env file.
+Environment=DO_NOT_TRACK=1
+
+Restart=on-failure
+RestartSec=5
+
+# --- hardening (safe for a userspace network service) ---
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+# ProtectKernelTunables is intentionally OMITTED. It over-mounts parts of /proc
+# read-only, which makes procfs "not fully visible"; the kernel then refuses to
+# let the clawpatrol-plugin-aws sandbox mount a fresh /proc inside its user
+# namespace ("mount /proc: operation not permitted"), so the plugin can't load
+# (a kernel lacking Landlock — CONFIG_SECURITY_LANDLOCK unset — has the namespace
+# sandbox as the only backend). Low cost here: a DynamicUser + NoNewPrivileges
+# process can't write kernel tunables regardless. Do NOT re-add it without moving
+# the plugin to a sandbox backend this host supports.
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+# NOTE: the gateway needs outbound network — do not restrict address families.
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,7 @@
+# OS images are never committed — download them from raspberrypi.com.
+*.img.xz
+*.img.xz.sha256
+
+# Filled-in secrets — created from the *.example templates before flashing.
+network-config.yaml
+gateway/gateway.env

@@ -1,0 +1,334 @@
+#cloud-config
+# clawbot — cloud-init user-data (a dedicated agent box behind the clawgateway).
+#
+# Passed to rpi-imager via `--cloudinit-userdata`; runs at FIRST boot only. It:
+#   1. brings up networking + key-only SSH
+#   2. installs the clawpatrol binary from a fork's `edge` release (arch-detected)
+#   3. stages a one-command onboarding helper (`clawbot-join`) that also installs
+#      the gateway MITM CA (system trust + /etc/environment CA-bundle vars)
+#   4. enables VNC (wayvnc) so a labwc desktop is reachable from first boot
+#
+# It does NOT auto-onboard: `clawpatrol join` is interactive (operator Tailscale
+# login), so onboarding is a one-time MANUAL step — SSH in and run `clawbot-join`.
+# It also does NOT provision the agent's home — that's your layer (see the
+# PROVISIONING block in clawbot-join below, and this dir's README).
+#
+# BEFORE FLASHING, replace the placeholders:
+#   - hostname            : a UNIQUE name per box (clawbot-1, clawbot-2, …)
+#   - ssh_authorized_keys : your SSH public key
+#   - passwd              : a password hash for sudo (login is key-only) —
+#                           generate with:  openssl passwd -6
+#   - the `base=…/releases/…` fork URL in runcmd (see this dir's README)
+#   - the PROVISIONING block in clawbot-join (your dotfiles/installer)
+#
+# SECRET (bring-up only): the `passwd` hash lands on the world-readable boot
+# partition. Login is key-only (ssh_pwauth: false), so it authorises ONLY sudo.
+# The WiFi PSK comes via network-config separately.
+
+manage_resolv_conf: false
+
+# Set a UNIQUE hostname per box before flashing (clawbot-1, clawbot-2, …).
+hostname: clawbot-1
+manage_etc_hosts: true
+
+packages:
+  - avahi-daemon
+  - curl
+  # git: to clone your provisioning at onboarding, if you use that pattern.
+  - git
+  # ffmpeg: example dep some agents (e.g. TTS) need. Pre-install as root HERE — the
+  # login user's sudo needs a password, so an unattended installer can't apt-install
+  # it later. Drop packages your agent doesn't need.
+  - ffmpeg
+
+# No RTC: skip apt's date check for this one boot (NTP corrects the clock after).
+apt:
+  preserve_sources_list: true
+  conf: |
+    Acquire {
+      Check-Date "false";
+    };
+
+# Refresh indexes + upgrade the base image at first boot (direct internet, pre-join).
+package_update: true
+package_upgrade: true
+
+timezone: Etc/UTC
+keyboard:
+  model: pc105
+  layout: "us"
+
+user:
+  name: clawtilla
+  shell: /bin/bash
+  lock_passwd: false
+  # REPLACE ME — a password hash (see the header). Login is key-only.
+  passwd: "REPLACE_ME_WITH_A_PASSWORD_HASH"
+  # Password-REQUIRED sudo (overrides the RPi cloud-init default of NOPASSWD:ALL).
+  # Login is key-only (ssh_pwauth: false), so this password authorises ONLY sudo,
+  # not login. `clawbot-join` sudos internally (CA install, system Tailscale) — run
+  # it interactively and enter the password once (sudo caches it for the run).
+  sudo: "ALL=(ALL:ALL) ALL"
+  ssh_authorized_keys:
+    # REPLACE ME — your SSH public key.
+    - "ssh-ed25519 AAAA_REPLACE_ME your-key@example.com"
+
+ssh_pwauth: false
+
+write_files:
+  # System-wide env for every PAM session (incl. non-interactive ssh). Path is
+  # hard-coded (no $HOME expansion in /etc/environment); clawtilla is the box user.
+  #
+  # UV_CONCURRENT_DOWNLOADS / UV_HTTP_TIMEOUT: serialize uv for anything that runs
+  # uv/pip BEHIND the gateway. All egress rides the gateway's USERSPACE exit-node
+  # (gVisor/tsnet netstack), which can collapse under parallel connection bursts —
+  # dropped connections that surface as `client error (Connect)` OR a bogus
+  # `UnknownIssuer` from a torn-down TLS. uv's default fan-out trips it; =1 completes
+  # cleanly. Do the heavy install pre-join over direct internet to dodge this; the
+  # cap still protects the light post-join re-apply and anything the AGENT runs at
+  # runtime. MUST live here (PAM, ALL sessions), not only /etc/profile.d (login only).
+  #
+  # BASH_ENV: makes NON-interactive bash source your shell env so ~/.local/bin lands
+  # on PATH for tools an agent shells out to. Point it at your provisioning's env
+  # file (this path is an example for a chezmoi-based dotfiles layer). CLAWBOT=1 is
+  # likewise an example switch a provisioning layer can read — keep/drop to taste.
+  - path: /etc/environment
+    append: true
+    content: |
+      CLAWBOT=1
+      BASH_ENV=/home/clawtilla/.config/shell/env.sh
+      UV_CONCURRENT_DOWNLOADS=1
+      UV_HTTP_TIMEOUT=180
+  # One-command onboarding helper. After first boot, SSH in (LAN/mDNS, before the
+  # box is on the tailnet) and run it ONCE:
+  #     ssh clawtilla@clawbot-1.local
+  #     clawbot-join
+  # --login: stands up a temporary tsnet node; you complete the Tailscale login as
+  #          the operator and clawpatrol auto-approves (operator identity).
+  # --whole-machine: routes ALL host traffic through the gateway (installs system
+  #          Tailscale, pins clawpatrol-gateway as exit node). Dedicated agent box.
+  # After the join it installs the gateway MITM CA into the system trust store AND
+  # persists the CA-bundle env vars in /etc/environment — without this,
+  # non-interactive tools (installers, mise, uv) fail TLS with UnknownIssuer.
+  - path: /usr/local/bin/clawbot-join
+    permissions: "0755"
+    content: |
+      #!/bin/sh
+      # Onboard this box to the clawgateway. Interactive (Tailscale login), run once.
+      set -eu
+      GATEWAY_URL="http://clawpatrol-gateway:8080"
+
+      clawpatrol join --whole-machine --login "$GATEWAY_URL" "$@"
+
+      # --- CA trust ------------------------------------------------------------
+      # --whole-machine MITMs ALL egress, so every client must trust the gateway
+      # CA (~/.clawpatrol/ca.crt). Two trust layers:
+      CA="$HOME/.clawpatrol/ca.crt"
+      DST="/usr/local/share/ca-certificates/clawpatrol.crt"
+
+      # 1. System trust store — OS-trust tools (git, wget, plain curl, apt, Go
+      #    binaries). Idempotent; sudo password is cached from the join above.
+      if [ -f "$CA" ] && ! cmp -s "$CA" "$DST" 2>/dev/null; then
+        sudo cp "$CA" "$DST"
+        sudo update-ca-certificates
+      fi
+
+      # 2. Env CA-bundle vars -> the MERGED bundle (system roots + gateway CA).
+      #    Persisted in /etc/environment (PAM, whole-session) so NON-interactive
+      #    shells pick them up. mise/uv read the OS trust store directly (step 1
+      #    covers them); these vars are for tools that ONLY consult their own bundle:
+      #    Node (NODE_EXTRA_CA_CERTS), python-requests (REQUESTS_CA_BUNDLE), botocore
+      #    (AWS_CA_BUNDLE), etc. Add each var per-variable (not all-or-nothing) so a
+      #    partial prior run can't leave some unset; idempotent on re-run.
+      C=/etc/ssl/certs/ca-certificates.crt
+      for v in SSL_CERT_FILE NODE_EXTRA_CA_CERTS REQUESTS_CA_BUNDLE CURL_CA_BUNDLE \
+               GIT_SSL_CAINFO DENO_CERT PIP_CERT AWS_CA_BUNDLE; do
+        if ! grep -q "^$v=" /etc/environment 2>/dev/null; then
+          echo "$v=$C" | sudo tee -a /etc/environment >/dev/null
+        fi
+      done
+
+      # NB: browser trust for MITM'd sites is FIREFOX-ONLY — the static enterprise
+      # policy in /etc/firefox/policies (write_files below) loads the gateway CA at
+      # launch. Chromium is NOT usable behind this gateway (see that policy's comment).
+
+      echo "clawbot: gateway CA installed in system trust + CA-bundle vars set in /etc/environment."
+
+      # --- PROVISIONING (customize this) --------------------------------------
+      # This is YOUR layer. The point of the ordering is: run the HEAVY toolchain
+      # install over DIRECT internet BEFORE this join (it never touches the gateway),
+      # then finish the LIGHT, gateway-dependent bits here — the part that needs a
+      # credential the gateway injects (e.g. cloning a private repo whose token the
+      # gateway swaps in), and any re-apply that must go through the gateway. Keep it
+      # light so the exit-node burst-collapse is a non-issue.
+      #
+      # Example (a chezmoi-based dotfiles layer): the pre-join heavy install is
+      #   git clone https://github.com/YOUR_ORG/your-dotfiles.git ~/.dotfiles && ~/.dotfiles/install.sh
+      # and this finishes the private overlay + seeding through the gateway:
+      #
+      #   DOTFILES="$HOME/.dotfiles"
+      #   CHEZMOI="$HOME/.local/bin/chezmoi"
+      #   if [ -x "$DOTFILES/install.sh" ] && [ -x "$CHEZMOI" ]; then
+      #     "$CHEZMOI" state delete-bucket --bucket=entryState >/dev/null 2>&1 || true
+      #     ( cd "$DOTFILES" && ./install.sh </dev/null ) \
+      #       || echo "clawbot: provisioning failed (non-fatal); re-run your installer." >&2
+      #   else
+      #     echo "clawbot: run the heavy install FIRST (direct internet, before this join)." >&2
+      #   fi
+
+  # CA-bundle vars for every LOGIN shell. Belt-and-suspenders alongside the
+  # /etc/environment entries clawbot-join writes (PAM): some graphical/autologin
+  # sessions don't apply pam_env to spawned terminals. The merged bundle path always
+  # exists after join (inert pre-join, harmless on a Lite image).
+  - path: /etc/profile.d/clawpatrol-ca.sh
+    permissions: "0644"
+    content: |
+      # clawpatrol gateway client env for login shells.
+      # 1) CA-bundle vars so tools trust the gateway's MITM CA.
+      C=/etc/ssl/certs/ca-certificates.crt
+      export SSL_CERT_FILE="$C" NODE_EXTRA_CA_CERTS="$C" REQUESTS_CA_BUNDLE="$C" \
+             CURL_CA_BUNDLE="$C" GIT_SSL_CAINFO="$C" DENO_CERT="$C" PIP_CERT="$C" \
+             AWS_CA_BUNDLE="$C"
+      # 2) Serialize uv. All egress rides the gateway's USERSPACE exit-node, which can
+      #    collapse under parallel connection bursts. =1 is slower but robust; the
+      #    install is one-time. (Root fix is gateway side: kernel WireGuard / netstack.)
+      export UV_CONCURRENT_DOWNLOADS=1 UV_HTTP_TIMEOUT=180
+
+  # Firefox enterprise policy: trust the gateway MITM CA so MITM'd sites load without
+  # a cert warning. Firefox uses its own NSS store, not the system OpenSSL bundle, so
+  # `Install` loads the CA file directly at launch. The file lands once clawbot-join
+  # installs the CA, so this is inert until then and harmless on a Lite image.
+  #
+  # Firefox is the ONLY supported browser behind the gateway. Chromium spins forever:
+  # it opens many parallel connections per page and races QUIC (UDP/443), and the
+  # gateway's userspace exit-node collapses under connection bursts and drops non-DNS
+  # UDP. Neither --disable-quic nor a CA import fixes it — the real fix is gateway-side.
+  - path: /etc/firefox/policies/policies.json
+    permissions: "0644"
+    content: |
+      {
+        "policies": {
+          "Certificates": {
+            "ImportEnterpriseRoots": true,
+            "Install": ["/usr/local/share/ca-certificates/clawpatrol.crt"]
+          }
+        }
+      }
+
+  # Boot-time re-application of the whole-machine exemptions. `clawpatrol join
+  # --whole-machine` sets a PERSISTENT tailscale exit-node pref, so tailscaled re-pins
+  # it on every boot — but the routing exemptions (SSH/LAN reply traffic) and the
+  # gateway DNS pin it installs are runtime-only and DON'T survive a reboot. Without
+  # this, after a reboot the exit-node is back but the guards are gone -> SSH times
+  # out and DNS points at an unreachable resolver (locked out). This oneshot re-applies
+  # them after tailscaled, SSH FIRST so the box is always reachable by IP.
+  - path: /usr/local/sbin/clawpatrol-exit-guard
+    permissions: "0755"
+    content: |
+      #!/bin/sh
+      # Re-apply the whole-machine exit-node exemptions + gateway DNS pin that
+      # clawpatrol installs at join time but that don't survive a reboot. Runs as
+      # root from a systemd oneshot after tailscaled. Idempotent.
+      set -eu
+      GW_NAME="clawpatrol-gateway"
+      MARK=0x64
+
+      # 1. SSH FIRST — keep the box reachable by IP no matter what happens below.
+      #    Mark SSH replies (sport 22) and route them via the main table (direct
+      #    link), so an admin can always SSH in even if the gateway/DNS is down.
+      iptables -t mangle -C OUTPUT -p tcp --sport 22 -j MARK --set-mark "$MARK" 2>/dev/null \
+        || iptables -t mangle -A OUTPUT -p tcp --sport 22 -j MARK --set-mark "$MARK"
+      ip rule show | grep -q "fwmark $MARK" \
+        || ip rule add fwmark "$MARK" lookup main pref 50
+
+      # 2. Protect reply traffic from the primary LAN IP (VNC + any inbound LAN
+      #    service). Recomputed each boot from the physical interface, so a new
+      #    DHCP lease doesn't leave a stale rule.
+      lan_ip="$(ip -o -4 addr show scope global 2>/dev/null \
+        | awk '$2 !~ /^(lo|tailscale|wg|docker|clawpatrol)/ {split($4,a,"/"); print a[1]; exit}')"
+      if [ -n "${lan_ip:-}" ] && ! ip rule show | grep -q "from $lan_ip lookup main"; then
+        ip rule add from "$lan_ip" lookup main pref 100
+      fi
+
+      # 3. Pin DNS at the gateway. tsnet has no UDP fallback, so exit-node UDP/53 to a
+      #    public resolver is dropped at the gateway netstack — queries MUST hit the
+      #    gateway itself. Wait briefly for the gateway peer to appear.
+      i=0; gw_ip=""
+      while [ "$i" -lt 30 ]; do
+        gw_ip="$(tailscale ip -4 "$GW_NAME" 2>/dev/null | head -n1 || true)"
+        [ -n "$gw_ip" ] && break
+        sleep 2; i=$((i + 1))
+      done
+      if [ -n "$gw_ip" ]; then
+        printf '# clawpatrol: routed via Tailscale exit-node\nnameserver %s\n' "$gw_ip" > /etc/resolv.conf
+      else
+        echo "clawpatrol-exit-guard: gateway $GW_NAME not on tailnet; left DNS untouched" >&2
+      fi
+  - path: /etc/systemd/system/clawpatrol-exit-guard.service
+    permissions: "0644"
+    content: |
+      [Unit]
+      Description=Re-apply clawpatrol whole-machine exit-node exemptions + gateway DNS on boot
+      Documentation=https://clawpatrol.dev
+      After=tailscaled.service network-online.target NetworkManager.service
+      Wants=network-online.target
+      # No-op until the box has been joined with --whole-machine (join writes the marker).
+      ConditionPathExists=/home/clawtilla/.clawpatrol/whole-machine
+
+      [Service]
+      Type=oneshot
+      RemainAfterExit=yes
+      Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+      ExecStart=/usr/local/sbin/clawpatrol-exit-guard
+
+      [Install]
+      WantedBy=multi-user.target
+
+runcmd:
+  - [systemctl, enable, --now, ssh]
+  # Enable (not start) the exit-node guard. Its ConditionPathExists makes it a no-op
+  # until the box is joined with --whole-machine; from the first reboot AFTER
+  # `clawbot-join` it re-applies the SSH/LAN exemptions + gateway DNS pin.
+  - [systemctl, enable, clawpatrol-exit-guard.service]
+  # Install the clawpatrol binary (arch-detected) from a fork's rolling `edge`
+  # prerelease, checksum-verified. Waits for NTP first (no RTC -> GitHub's TLS cert
+  # looks "not yet valid"). Non-fatal on failure. NB: FORK build — point `base` at
+  # your own fork/build, or use an upstream denoland/clawpatrol release.
+  - |
+    set -eu
+    timedatectl set-ntp true || true
+    i=0
+    while [ "$(timedatectl show -p NTPSynchronized --value 2>/dev/null)" != "yes" ] && [ "$i" -lt 60 ]; do
+      sleep 2; i=$((i + 1))
+    done
+    case "$(uname -m)" in
+      aarch64 | arm64) arch=arm64 ;;
+      x86_64 | amd64) arch=amd64 ;;
+      *) echo "clawbot: unsupported arch $(uname -m)" >&2; exit 1 ;;
+    esac
+    base="https://github.com/YOUR_FORK/clawpatrol/releases/download/edge"
+    tmp="$(mktemp -d)"
+    cd "$tmp"
+    curl -fsSL -O "$base/clawpatrol-linux-$arch"
+    curl -fsSL -O "$base/SHA256SUMS"
+    grep "clawpatrol-linux-$arch" SHA256SUMS | sha256sum -c -
+    install -m 0755 "clawpatrol-linux-$arch" /usr/local/bin/clawpatrol
+    cd / && rm -rf "$tmp"
+    /usr/local/bin/clawpatrol version
+  # Enable VNC so a desktop is reachable on first boot. wayvnc ships installed and
+  # labwc runs (autologin) on the FULL image, but `wayvnc.service` is disabled by
+  # default. `raspi-config nonint do_vnc 0` wires it up the Pi-blessed way; the stock
+  # /etc/wayvnc/config listens on all interfaces with TLS + PAM auth (the system
+  # password above). EXPOSURE: this opens tcp/5900 on the LAN *and* the tailnet, NOT
+  # gated by the clawgateway — restrict to the tailnet / rotate the password as you
+  # harden, or drop this step. No-op (logged) on a Lite image with no desktop.
+  - |
+    set -eu
+    if command -v raspi-config >/dev/null 2>&1 && dpkg -s wayvnc >/dev/null 2>&1; then
+      raspi-config nonint do_vnc 0
+      echo "clawbot: VNC (wayvnc) enabled — reachable on tcp/5900"
+    else
+      echo "clawbot: wayvnc/desktop absent — skipping VNC enable (Lite image?)" >&2
+    fi
+
+final_message: "clawbot up after $UPTIME s — SSH in, run your heavy install (over direct internet), THEN 'clawbot-join' to onboard."

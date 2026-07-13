@@ -1,0 +1,51 @@
+// Tailnet ACL for the Clawtilla Raspberry Pi deployment.
+// Paste into Tailscale admin → Access controls. This is the stock "allow all"
+// example policy with only the tag ownership + auto-approvers Clawtilla needs
+// added; tighten the grants/ssh sections for your tailnet as you see fit.
+{
+  // Device tags for the clawpatrol setup:
+  //   tag:clawgateway — the clawpatrol gateway node (the Pi's embedded tsnet node)
+  //   tag:clawbot     — clawbot agent devices that `clawpatrol join` and tunnel through the gateway
+  "tagOwners": {
+    "tag:clawgateway": ["autogroup:admin"],
+    // The gateway's OAuth client is tagged tag:clawgateway and MINTS tag:clawbot
+    // keys for joining clawbots. Tailscale only lets an OAuth client create a key
+    // whose tag it OWNS, so tag:clawgateway must be an owner of tag:clawbot.
+    // (autogroup:admin alone just lets a human apply the tag manually — the OAuth
+    // client isn't a human, hence the otherwise "tags invalid or not permitted" 400.)
+    "tag:clawbot": ["autogroup:admin", "tag:clawgateway"],
+  },
+  "autoApprovers": {
+    // The GATEWAY advertises the exit node, so the exit-node approver is the
+    // gateway's tag (not the client tag). clawpatrol's doc uses one shared tag
+    // for gateway+clients; we split them, so this must be tag:clawgateway.
+    "exitNode": ["tag:clawgateway"],
+    "routes": {
+      // Subnet routes the gateway advertises. Adjust the CIDRs to match your
+      // gateway's advertised routes (these are examples).
+      "10.78.0.0/16": ["tag:clawgateway"],
+      "fd78::/64": ["tag:clawgateway"],
+    },
+  },
+  // Define grants that govern access for users, groups, autogroups, tags,
+  // Tailscale IP addresses, and subnet ranges.
+  "grants": [
+    // Allow all connections. Comment this out and define specific restrictions
+    // to lock the tailnet down.
+    {
+      "src": ["*"],
+      "dst": ["*"],
+      "ip": ["*"],
+    },
+  ],
+  // Define users and devices that can use Tailscale SSH.
+  "ssh": [
+    // Allow all users to SSH into their own devices in check mode.
+    {
+      "action": "check",
+      "src": ["autogroup:member"],
+      "dst": ["autogroup:self"],
+      "users": ["autogroup:nonroot", "root"],
+    },
+  ],
+}

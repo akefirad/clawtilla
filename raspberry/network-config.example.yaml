@@ -1,0 +1,29 @@
+# network-config (netplan v2 schema) — SHARED across the gateway and ClawBot roles.
+#
+# Passed to rpi-imager via `--cloudinit-networkconfig`; written to the FAT boot
+# partition as /boot/firmware/network-config and applied on first boot. This is
+# exactly the format the imager itself generates, so RPi OS (NetworkManager
+# renderer) consumes it directly.
+#
+# Copy to network-config.yaml and fill in your WiFi before flashing. Both
+# interfaces are `optional: true` so boot never blocks waiting on a link. Wired-only
+# boxes can drop the `wifis:` block entirely.
+#
+# SECRET: the wifi `password` is the pre-computed WPA PSK (64-hex), NOT the
+# plaintext passphrase — generate it with:  wpa_passphrase "<SSID>" "<passphrase>"
+# The filled-in network-config.yaml is gitignored; keep it out of git.
+network:
+  version: 2
+  ethernets:
+    eth0:
+      dhcp4: true
+      dhcp6: true
+      optional: true
+  wifis:
+    wlan0:
+      dhcp4: true
+      regulatory-domain: "US"      # your 2-letter country code (e.g. US, DE, GB)
+      access-points:
+        "YOUR_WIFI_SSID":
+          password: "REPLACE_ME_WITH_64_HEX_WPA_PSK"
+      optional: true
