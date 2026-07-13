@@ -1,0 +1,146 @@
+#cloud-config
+# clawgateway — cloud-init user-data (the clawpatrol GATEWAY box).
+#
+# Passed to rpi-imager via `--cloudinit-userdata`; imager writes it to the FAT
+# boot partition as /boot/firmware/user-data. Runs at FIRST boot only.
+#
+# It brings up networking + key-only SSH, installs the clawpatrol binary (+ the
+# AWS plugin) from a fork's `edge` release, and — if the boot-partition bundle is
+# present (see deploy-gateway-bundle.sh) — installs the gateway config/unit +
+# secret env and starts the clawpatrol gateway service.
+#
+# BEFORE FLASHING, replace the placeholders below:
+#   - ssh_authorized_keys : your SSH public key
+#   - passwd              : a password hash for sudo (login is key-only) —
+#                           generate with:  openssl passwd -6   (or mkpasswd -m sha512crypt)
+#   - the `base=…/releases/…` fork URLs in runcmd (see this dir's README).
+#
+# SECRETS are delivered OUT-OF-BAND, never committed here:
+#   - WiFi PSK      -> network-config (via --cloudinit-networkconfig)
+#   - TS auth/OAuth -> gateway.env, staged into /boot/firmware/clawgateway/ on the
+#                      FAT partition by deploy-gateway-bundle.sh (wiped on first boot)
+
+# Don't let cloud-init rewrite /etc/resolv.conf (NetworkManager owns it).
+manage_resolv_conf: false
+
+hostname: clawgateway
+manage_etc_hosts: true
+
+# avahi/mDNS so the headless Pi is reachable as `clawgateway.local` on first
+# contact, before you know its DHCP address. curl is needed by the clawpatrol
+# install step in runcmd — packages install before runcmd runs, so it's ready.
+packages:
+  - avahi-daemon
+  - curl
+
+# The Pi has no battery-backed RTC, so its clock can be wrong at first boot and
+# apt would reject the "not yet valid" repo metadata. Skip the date check for
+# this one run; NTP corrects the clock shortly after.
+apt:
+  preserve_sources_list: true
+  conf: |
+    Acquire {
+      Check-Date "false";
+    };
+
+# Refresh indexes + upgrade the base image at first boot. update is a prereq for the
+# `packages:` installs above; upgrade patches the stock image. Safe before NTP syncs
+# (the runcmd below waits for it): the base RPi/Debian repos are HTTP + signed and
+# Check-Date is disabled above. Adds minutes to first boot and will NOT reboot for a
+# new kernel (no power_state set) — the running kernel updates on the next reboot.
+package_update: true
+package_upgrade: true
+
+timezone: Etc/UTC
+keyboard:
+  model: pc105
+  layout: "us"
+
+user:
+  name: clawtilla
+  shell: /bin/bash
+  lock_passwd: false
+  # REPLACE ME — a password hash (see the header). Login is key-only
+  # (ssh_pwauth: false), so this authorises sudo only, not login.
+  passwd: "REPLACE_ME_WITH_A_PASSWORD_HASH"
+  ssh_authorized_keys:
+    # REPLACE ME — your SSH public key.
+    - "ssh-ed25519 AAAA_REPLACE_ME your-key@example.com"
+
+ssh_pwauth: false
+
+runcmd:
+  - [systemctl, enable, --now, ssh]
+  # Install the clawpatrol binary (arch-detected) from a fork's rolling `edge`
+  # prerelease, checksum-verified against the release's SHA256SUMS. `edge` is a
+  # prerelease, so GitHub excludes it from /latest — fetch it by fixed tag. Waits
+  # for NTP first (no RTC -> GitHub's TLS cert looks "not yet valid"). A failure
+  # here is logged to /var/log/cloud-init-output.log but won't block boot.
+  # NB: this downloads a FORK build (see this dir's README) — point `base` at your
+  # own fork/build, or use an upstream denoland/clawpatrol release.
+  - |
+    set -eu
+    timedatectl set-ntp true || true
+    i=0
+    while [ "$(timedatectl show -p NTPSynchronized --value 2>/dev/null)" != "yes" ] && [ "$i" -lt 60 ]; do
+      sleep 2; i=$((i + 1))
+    done
+    case "$(uname -m)" in
+      aarch64 | arm64) arch=arm64 ;;
+      x86_64 | amd64) arch=amd64 ;;
+      *) echo "clawgateway: unsupported arch $(uname -m)" >&2; exit 1 ;;
+    esac
+    base="https://github.com/YOUR_FORK/clawpatrol/releases/download/edge"
+    tmp="$(mktemp -d)"
+    cd "$tmp"
+    curl -fsSL -O "$base/clawpatrol-linux-$arch"
+    curl -fsSL -O "$base/SHA256SUMS"
+    grep "clawpatrol-linux-$arch" SHA256SUMS | sha256sum -c -
+    install -m 0755 "clawpatrol-linux-$arch" /usr/local/bin/clawpatrol
+    cd / && rm -rf "$tmp"
+    /usr/local/bin/clawpatrol version
+  # Install the external AWS SSO plugin binary (linux/$arch) from the
+  # clawpatrol-plugin-aws fork's rolling `edge` prerelease, checksum-verified. It
+  # lands at /usr/local/lib/clawpatrol/aws-plugin — the SAME path the Docker image
+  # uses — so gateway.hcl's `plugin "aws" { source = ... }` is identical across
+  # both deployments. Only needed if you use the AWS/EKS blocks in gateway.hcl;
+  # drop this step otherwise. A failure here is logged but won't block boot.
+  - |
+    set -eu
+    case "$(uname -m)" in
+      aarch64 | arm64) arch=arm64 ;;
+      x86_64 | amd64) arch=amd64 ;;
+      *) echo "aws-plugin: unsupported arch $(uname -m)" >&2; exit 1 ;;
+    esac
+    base="https://github.com/YOUR_FORK/clawpatrol-plugin-aws/releases/download/edge"
+    tmp="$(mktemp -d)"
+    cd "$tmp"
+    curl -fsSL -O "$base/clawpatrol-plugin-aws-linux-$arch"
+    curl -fsSL -O "$base/SHA256SUMS"
+    grep "clawpatrol-plugin-aws-linux-$arch" SHA256SUMS | sha256sum -c -
+    install -D -m 0755 "clawpatrol-plugin-aws-linux-$arch" /usr/local/lib/clawpatrol/aws-plugin
+    cd / && rm -rf "$tmp"
+  # Deploy the gateway service from the boot-partition bundle staged by
+  # deploy-gateway-bundle.sh. This installs gateway.hcl + the unit to their system
+  # paths, installs the (secret) gateway.env root-owned 0600, wipes the secret off
+  # the FAT partition, validates the config, and starts the service. Bundle
+  # absent/incomplete -> the box still boots; deploy later by hand.
+  - |
+    set -eu
+    src=/boot/firmware/clawgateway
+    if [ -f "$src/gateway.hcl" ] && [ -f "$src/gateway.env" ]; then
+      install -D -m 0644 "$src/gateway.hcl"                 /etc/clawpatrol/gateway.hcl
+      install -D -m 0644 "$src/clawpatrol-gateway.service"  /etc/systemd/system/clawpatrol-gateway.service
+      install -D -m 0600 -o root -g root "$src/gateway.env" /etc/clawpatrol/gateway.env
+      rm -f "$src/gateway.env"   # keep the secret off the world-readable FAT partition
+      systemctl daemon-reload
+      if /usr/local/bin/clawpatrol validate /etc/clawpatrol/gateway.hcl; then
+        systemctl enable --now clawpatrol-gateway
+      else
+        echo "clawpatrol: gateway.hcl failed validation — service NOT started" >&2
+      fi
+    else
+      echo "clawpatrol: /boot/firmware/clawgateway bundle incomplete (need gateway.hcl + gateway.env) — gateway NOT started" >&2
+    fi
+
+final_message: "clawgateway up after $UPTIME s — clawpatrol gateway; ssh clawtilla@clawgateway.local"
