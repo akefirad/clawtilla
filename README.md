@@ -117,6 +117,9 @@ rationale + source citations in the archived [design records](./docs/archive).
 
 - [`stack/`](./stack) — the deployable Compose stack (gateway + ClawBot
   images, policy, entrypoints).
+- [`raspberry/`](./raspberry) — a bare-metal reference deployment: cloud-init
+  seeds for flashing a Raspberry Pi fleet (gateway in Tailscale mode + ClawBot
+  Pis behind it).
 - [`tests/`](./tests) — acceptance + security test harness.
 - [`docs/`](./docs) — [architecture](./docs/architecture.md) (the design record,
   as built) and [`archive/`](./docs/archive) (the historical discovery + plan,
@@ -159,6 +162,10 @@ deployment **copies `stack/` and diverges**: fill `gateway.hcl` with your real
 upstreams + credentials, add a service per agent in `compose.yaml`, and keep
 secrets in an untracked `.env`. (Manage that copy however you like — e.g. vendor
 `stack/` and reconcile it as upstream moves.)
+
+For bare metal rather than Docker, [`raspberry/`](./raspberry) is the same idea as
+cloud-init seeds: a gateway Pi in Tailscale mode plus ClawBot Pis that
+`clawpatrol join` and tunnel through it. Copy it and diverge the same way.
 
 Two halves you supply outside this repo:
 
